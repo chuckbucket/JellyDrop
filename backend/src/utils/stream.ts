@@ -35,5 +35,27 @@ export function pipeJellyfinResponse(expressRes: ExpressResponse, jellyfinRes: R
     expressRes.end();
     return;
   }
-  Readable.fromWeb(jellyfinRes.body as unknown as import("node:stream/web").ReadableStream).pipe(expressRes);
+
+  const source = Readable.fromWeb(jellyfinRes.body as unknown as import("node:stream/web").ReadableStream);
+
+  // A client cancelling mid-transfer (our own preflight check cancelling its body, a closed tab, a
+  // browser retry) must never crash the whole process — without these listeners, an unhandled
+  // 'error' event on either stream does exactly that and takes the entire app down with it.
+  source.on("error", (err) => {
+    console.error("[download] upstream stream error:", err.message);
+    if (!expressRes.headersSent) {
+      expressRes.status(502).json({ error: "Upstream stream error" });
+    } else {
+      expressRes.destroy();
+    }
+  });
+  expressRes.on("error", (err) => {
+    console.error("[download] response stream error:", err.message);
+    source.destroy();
+  });
+  expressRes.on("close", () => {
+    if (!source.destroyed) source.destroy();
+  });
+
+  source.pipe(expressRes);
 }

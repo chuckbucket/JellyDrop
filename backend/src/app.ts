@@ -6,6 +6,21 @@ import { apiRouter } from "./routes";
 export function createApp(staticDir: string): Express {
   const app = express();
 
+  app.use("/api", (req, res, next) => {
+    const start = Date.now();
+    let logged = false;
+    const logOnce = (outcome: string) => {
+      if (logged) return;
+      logged = true;
+      console.log(`${req.method} ${req.originalUrl} -> ${outcome} (${Date.now() - start}ms)`);
+    };
+    // 'finish' covers a normal completed response; a client disconnecting mid-stream (a cancelled
+    // download, a closed tab) only ever fires 'close' — log that case too or it's invisible.
+    res.on("finish", () => logOnce(String(res.statusCode)));
+    res.on("close", () => logOnce(res.writableEnded ? String(res.statusCode) : "client disconnected"));
+    next();
+  });
+
   app.use("/api", apiRouter);
 
   // Any unmatched /api/* route should return JSON, not fall through to the SPA's index.html.
