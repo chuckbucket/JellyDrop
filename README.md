@@ -14,10 +14,9 @@ filesystem paths are never exposed to the browser.
 - Download at three levels: single episode, entire season, or entire series
 - Site-wide search across movies and TV shows
 - A persistent download queue (bottom-right) that processes downloads one at a time automatically,
-  with Waiting / Downloading / Complete / Failed status, real byte-level progress, and one-click retry
-- On Chrome/Edge, pick a download folder once (e.g. an external drive or SD card) and every
-  subsequent download writes straight there with no further prompts — Firefox/Safari fall back to
-  normal browser downloads automatically
+  with Waiting / Downloading / Complete / Failed status and one-click retry
+- Every file saves to the browser's standard Downloads location — no folder prompts, nothing to
+  configure, as automatic as the browser allows
 - Dark, responsive UI
 - Single Docker container, configured entirely with three environment variables
 

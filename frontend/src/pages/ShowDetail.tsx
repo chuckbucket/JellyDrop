@@ -13,7 +13,7 @@ export function ShowDetail() {
   const [show, setShow] = useState<ShowDetailDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [queuingAll, setQueuingAll] = useState(false);
-  const { enqueue, ensureDownloadFolder } = useDownloadQueue();
+  const { enqueue } = useDownloadQueue();
 
   useEffect(() => {
     if (!id) return;
@@ -26,9 +26,6 @@ export function ShowDetail() {
     if (!id) return;
     setQueuingAll(true);
     try {
-      // Must come first — showDirectoryPicker() needs a direct user gesture, and the manifest
-      // fetch below is an async round-trip that would otherwise consume it.
-      await ensureDownloadFolder();
       const manifest = await getShowManifest(id);
       enqueue(manifest.items);
     } finally {

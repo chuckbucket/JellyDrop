@@ -11,15 +11,12 @@ interface SeasonRowProps {
 }
 
 export function SeasonRow({ seriesId, season }: SeasonRowProps) {
-  const { enqueue, ensureDownloadFolder } = useDownloadQueue();
+  const { enqueue } = useDownloadQueue();
   const [queuing, setQueuing] = useState(false);
 
   async function handleDownloadSeason() {
     setQueuing(true);
     try {
-      // Must come first — showDirectoryPicker() needs a direct user gesture, and the manifest
-      // fetch below is an async round-trip that would otherwise consume it.
-      await ensureDownloadFolder();
       const manifest = await getSeasonManifest(season.id);
       enqueue(manifest.items);
     } finally {
