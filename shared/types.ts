@@ -28,6 +28,9 @@ export interface SeriesDTO {
   name: string;
   year: number | null;
   posterUrl: string;
+  seasonCount: number;
+  firstSeasonYear: number | null;
+  lastSeasonYear: number | null;
 }
 
 export interface SeasonSummaryDTO {
@@ -36,6 +39,8 @@ export interface SeasonSummaryDTO {
   indexNumber: number | null;
   episodeCount: number;
   sizeBytes: number | null;
+  overview: string | null;
+  posterUrl: string;
 }
 
 export interface ShowDetailDTO {

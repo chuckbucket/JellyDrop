@@ -5,7 +5,7 @@ interface PosterCardProps {
   to: string;
   posterUrl: string;
   title: string;
-  subtitle?: string;
+  subtitle?: ReactNode;
   action?: ReactNode;
 }
 

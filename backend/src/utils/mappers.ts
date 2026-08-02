@@ -48,12 +48,21 @@ export function mapMovie(item: JellyfinItem): MovieDTO {
   };
 }
 
-export function mapSeries(item: JellyfinItem): SeriesDTO {
+export interface SeasonStats {
+  count: number;
+  firstYear: number | null;
+  lastYear: number | null;
+}
+
+export function mapSeries(item: JellyfinItem, seasonStats?: SeasonStats): SeriesDTO {
   return {
     id: item.Id,
     name: item.Name,
     year: item.ProductionYear ?? null,
     posterUrl: posterUrl(item.Id),
+    seasonCount: seasonStats?.count ?? 0,
+    firstSeasonYear: seasonStats?.firstYear ?? null,
+    lastSeasonYear: seasonStats?.lastYear ?? null,
   };
 }
 

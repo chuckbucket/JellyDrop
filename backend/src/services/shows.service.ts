@@ -1,7 +1,7 @@
 import type { EpisodeDTO, PagedResult, SeasonDetailDTO, SeasonSummaryDTO, SeriesDTO, ShowDetailDTO } from "@shared/types";
 import { jellyfinClient } from "../jellyfin/client";
 import type { JellyfinItem } from "../jellyfin/types";
-import { getFileSizeBytes, getResolutionLabel, hasMediaFile, mapSeries } from "../utils/mappers";
+import { getFileSizeBytes, getResolutionLabel, hasMediaFile, mapSeries, type SeasonStats } from "../utils/mappers";
 
 export interface GetShowsOptions {
   libraryId?: string;
@@ -9,19 +9,50 @@ export interface GetShowsOptions {
   limit?: number;
 }
 
-export async function getShows(options: GetShowsOptions): Promise<PagedResult<SeriesDTO>> {
-  const { libraryId, startIndex = 0, limit = 100 } = options;
+/**
+ * One bulk query for every season in the library (Jellyfin returns them all in a single response,
+ * no pagination needed), grouped by SeriesId — this avoids an N+1 "fetch seasons per series" fan-out
+ * when listing a whole library. Season 0 ("Specials") is excluded so the count/year-range reflects
+ * only regular numbered seasons, matching how these are normally presented.
+ */
+async function getSeasonStatsByLibrary(libraryId: string | undefined): Promise<Map<string, SeasonStats>> {
   const res = await jellyfinClient.getItems({
     ParentId: libraryId,
-    IncludeItemTypes: "Series",
+    IncludeItemTypes: "Season",
     Recursive: "true",
     Fields: "ProductionYear",
-    SortBy: "SortName",
-    StartIndex: startIndex,
-    Limit: limit,
   });
+
+  const statsBySeriesId = new Map<string, SeasonStats>();
+  for (const season of res.Items) {
+    if (!season.SeriesId || !season.IndexNumber) continue;
+    const stats = statsBySeriesId.get(season.SeriesId) ?? { count: 0, firstYear: null, lastYear: null };
+    stats.count += 1;
+    if (season.ProductionYear) {
+      stats.firstYear = stats.firstYear === null ? season.ProductionYear : Math.min(stats.firstYear, season.ProductionYear);
+      stats.lastYear = stats.lastYear === null ? season.ProductionYear : Math.max(stats.lastYear, season.ProductionYear);
+    }
+    statsBySeriesId.set(season.SeriesId, stats);
+  }
+  return statsBySeriesId;
+}
+
+export async function getShows(options: GetShowsOptions): Promise<PagedResult<SeriesDTO>> {
+  const { libraryId, startIndex = 0, limit = 100 } = options;
+  const [res, seasonStatsBySeriesId] = await Promise.all([
+    jellyfinClient.getItems({
+      ParentId: libraryId,
+      IncludeItemTypes: "Series",
+      Recursive: "true",
+      Fields: "ProductionYear",
+      SortBy: "SortName",
+      StartIndex: startIndex,
+      Limit: limit,
+    }),
+    getSeasonStatsByLibrary(libraryId),
+  ]);
   return {
-    items: res.Items.map(mapSeries),
+    items: res.Items.map((item) => mapSeries(item, seasonStatsBySeriesId.get(item.Id))),
     startIndex: res.StartIndex,
     totalRecordCount: res.TotalRecordCount,
   };
@@ -42,7 +73,7 @@ interface SeasonsSummary {
  */
 async function getSeasonsWithEpisodeCounts(seriesId: string): Promise<SeasonsSummary> {
   const [seasons, episodes] = await Promise.all([
-    jellyfinClient.getSeasons(seriesId),
+    jellyfinClient.getSeasons(seriesId, ["Overview"]),
     jellyfinClient.getEpisodes(seriesId, { fields: ["ParentIndexNumber", "Container", "MediaSources"] }),
   ]);
 
@@ -71,6 +102,8 @@ async function getSeasonsWithEpisodeCounts(seriesId: string): Promise<SeasonsSum
       indexNumber: season.IndexNumber ?? null,
       episodeCount: season.IndexNumber !== undefined ? (countBySeasonNumber.get(season.IndexNumber) ?? 0) : 0,
       sizeBytes: season.IndexNumber !== undefined ? (sizeBySeasonNumber.get(season.IndexNumber) ?? null) : null,
+      overview: season.Overview ?? null,
+      posterUrl: `/api/image/${season.Id}`,
     }))
     .filter((season) => season.episodeCount > 0);
 

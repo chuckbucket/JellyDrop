@@ -55,8 +55,10 @@ class JellyfinClient {
     return res.Items;
   }
 
-  async getSeasons(seriesId: string): Promise<JellyfinItem[]> {
-    const res = await this.getJson<JellyfinItemsResponse>(`/Shows/${seriesId}/Seasons`);
+  async getSeasons(seriesId: string, fields?: string[]): Promise<JellyfinItem[]> {
+    const res = await this.getJson<JellyfinItemsResponse>(`/Shows/${seriesId}/Seasons`, {
+      Fields: fields?.join(","),
+    });
     return res.Items;
   }
 

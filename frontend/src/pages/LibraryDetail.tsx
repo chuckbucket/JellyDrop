@@ -10,6 +10,25 @@ import { PosterGrid } from "../components/PosterGrid";
 
 const PAGE_SIZE = 100;
 
+function SeriesSubtitle({ series }: { series: SeriesDTO }) {
+  const yearRange =
+    series.firstSeasonYear && series.lastSeasonYear
+      ? series.firstSeasonYear === series.lastSeasonYear
+        ? String(series.firstSeasonYear)
+        : `${series.firstSeasonYear}–${series.lastSeasonYear}`
+      : null;
+
+  return (
+    <>
+      {series.year && <span className="block">{series.year}</span>}
+      <span className="block">
+        {series.seasonCount} season{series.seasonCount === 1 ? "" : "s"}
+        {yearRange && ` · ${yearRange}`}
+      </span>
+    </>
+  );
+}
+
 export function LibraryDetail() {
   const { id } = useParams<{ id: string }>();
   const [library, setLibrary] = useState<LibraryDTO | null>(null);
@@ -65,7 +84,7 @@ export function LibraryDetail() {
               to={`/shows/${item.id}`}
               posterUrl={item.posterUrl}
               title={item.name}
-              subtitle={item.year ? String(item.year) : undefined}
+              subtitle={<SeriesSubtitle series={item as SeriesDTO} />}
             />
           )
         )}
