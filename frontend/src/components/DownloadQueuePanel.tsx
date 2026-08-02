@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useDownloadQueue, type QueueItemStatus } from "../context/DownloadQueueContext";
+import { useDownloadQueue, type QueueItem, type QueueItemStatus } from "../context/DownloadQueueContext";
 
 const statusLabel: Record<QueueItemStatus, string> = {
   waiting: "Waiting",
@@ -14,6 +14,46 @@ const statusColor: Record<QueueItemStatus, string> = {
   complete: "text-emerald-400",
   failed: "text-red-400",
 };
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function ItemStatusLine({ item }: { item: QueueItem }) {
+  if (item.status === "downloading") {
+    if (item.totalBytes) {
+      const percent = Math.min(100, Math.round((item.receivedBytes / item.totalBytes) * 100));
+      return (
+        <div className="mt-1">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-700">
+            <div
+              className="h-full rounded-full bg-sky-400 transition-[width] duration-200"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+          <p className="mt-1 text-xs text-sky-400">
+            {percent}% · {formatBytes(item.receivedBytes)} / {formatBytes(item.totalBytes)}
+          </p>
+        </div>
+      );
+    }
+    return <p className="text-xs text-sky-400">Downloading… {formatBytes(item.receivedBytes)}</p>;
+  }
+
+  if (item.status === "failed") {
+    return <p className="text-xs text-red-400">Failed{item.error ? `: ${item.error}` : ""}</p>;
+  }
+
+  return <p className={`text-xs ${statusColor[item.status]}`}>{statusLabel[item.status]}</p>;
+}
 
 export function DownloadQueuePanel() {
   const { items, retry, clearCompleted } = useDownloadQueue();
@@ -58,7 +98,7 @@ export function DownloadQueuePanel() {
               >
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm text-neutral-200">{item.name}</p>
-                  <p className={`text-xs ${statusColor[item.status]}`}>{statusLabel[item.status]}</p>
+                  <ItemStatusLine item={item} />
                 </div>
                 {item.status === "failed" && (
                   <button

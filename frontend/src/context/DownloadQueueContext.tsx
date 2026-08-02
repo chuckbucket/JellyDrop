@@ -9,6 +9,11 @@ export interface QueueItem {
   name: string;
   downloadUrl: string;
   status: QueueItemStatus;
+  /** Bytes received so far. Only meaningful while status is "downloading". */
+  receivedBytes: number;
+  /** From the response's Content-Length; null if the server didn't report one (progress is then indeterminate). */
+  totalBytes: number | null;
+  error?: string;
 }
 
 export interface EnqueueInput {
@@ -29,6 +34,9 @@ const DownloadQueueContext = createContext<DownloadQueueContextValue | null>(nul
 // A short pause between sequential downloads keeps well clear of browsers' "multiple automatic
 // downloads" heuristics — triggering many in a tight loop is what causes repeated permission prompts.
 const BETWEEN_DOWNLOADS_DELAY_MS = 300;
+// Re-rendering on every chunk (which can arrive many times a second) would be wasteful; this caps
+// how often the UI actually updates while still feeling live.
+const PROGRESS_UPDATE_THROTTLE_MS = 200;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -44,29 +52,67 @@ function nextQueueId(): string {
   return `${Date.now()}-${queueIdCounter}`;
 }
 
-async function triggerDownload(item: QueueItem): Promise<void> {
-  // Confirm the URL is actually good before handing off to the browser, so real failures (a stale
-  // link, a removed file) surface as "Failed" with a retry instead of silently doing nothing.
+function parseContentDispositionFilename(header: string | null): string | null {
+  if (!header) return null;
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match) return decodeURIComponent(utf8Match[1]);
+  const quotedMatch = header.match(/filename="([^"]+)"/i);
+  return quotedMatch ? quotedMatch[1] : null;
+}
+
+interface DownloadCallbacks {
+  onProgress: (receivedBytes: number, totalBytes: number | null) => void;
+}
+
+/**
+ * Reads the response as a stream so the queue can report real byte-level progress, and only
+ * resolves once every byte has actually arrived — "complete" here means complete, not "handed off".
+ */
+async function triggerDownload(item: QueueItem, { onProgress }: DownloadCallbacks): Promise<void> {
   const res = await fetch(item.downloadUrl);
-  if (!res.ok) {
+  if (!res.ok || !res.body) {
     await res.body?.cancel().catch(() => undefined);
     throw new Error(`Download failed with status ${res.status}`);
   }
-  // Cancel the body instead of reading it — we don't want to buffer a multi-GB movie into memory
-  // just to check its status. The real transfer happens below, driven entirely by the browser.
-  await res.body?.cancel().catch(() => undefined);
 
-  // Let the browser handle the actual save natively via the backend's `Content-Disposition:
-  // attachment` header, instead of building a blob + object URL ourselves. Browsers never navigate
-  // the visible page away for an "attachment" response — they download it in the background — so
-  // this works reliably even in Safari/WebKit, where blob: URLs + the `download` attribute are known
-  // to be flaky (and when that fails, the fallback is the browser navigating the tab to the raw blob,
-  // which has no headers at all — for a video file that shows up as a blank/black page).
-  const anchor = document.createElement("a");
-  anchor.href = item.downloadUrl;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
+  const totalBytes = Number(res.headers.get("content-length")) || null;
+  const filename = parseContentDispositionFilename(res.headers.get("content-disposition")) ?? item.name;
+
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let receivedBytes = 0;
+  let lastReportedAt = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    receivedBytes += value.byteLength;
+    const now = Date.now();
+    if (now - lastReportedAt >= PROGRESS_UPDATE_THROTTLE_MS) {
+      lastReportedAt = now;
+      onProgress(receivedBytes, totalBytes);
+    }
+  }
+  onProgress(receivedBytes, totalBytes);
+
+  // fetch() bodies are always backed by a real ArrayBuffer at runtime; the stricter generic
+  // ArrayBufferLike typing (which also admits SharedArrayBuffer) is what TS is objecting to here.
+  const blob = new Blob(chunks as BlobPart[]);
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    // The entire file is already in memory here (this isn't racing a live network transfer like
+    // before) — this pause is just margin for the browser to start reading the blob before we free it.
+    await sleep(2000);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 export function DownloadQueueProvider({ children }: { children: ReactNode }) {
@@ -76,12 +122,24 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
   const enqueue = useCallback((inputs: EnqueueInput[]) => {
     setItems((prev) => [
       ...prev,
-      ...inputs.map((input) => ({ ...input, queueId: nextQueueId(), status: "waiting" as const })),
+      ...inputs.map((input) => ({
+        ...input,
+        queueId: nextQueueId(),
+        status: "waiting" as const,
+        receivedBytes: 0,
+        totalBytes: null,
+      })),
     ]);
   }, []);
 
   const retry = useCallback((queueId: string) => {
-    setItems((prev) => prev.map((item) => (item.queueId === queueId ? { ...item, status: "waiting" as const } : item)));
+    setItems((prev) =>
+      prev.map((item) =>
+        item.queueId === queueId
+          ? { ...item, status: "waiting" as const, receivedBytes: 0, totalBytes: null, error: undefined }
+          : item
+      )
+    );
   }, []);
 
   const clearCompleted = useCallback(() => {
@@ -97,13 +155,20 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
     isProcessingRef.current = true;
     setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "downloading" as const } : item)));
 
+    const onProgress = (receivedBytes: number, totalBytes: number | null) => {
+      setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, receivedBytes, totalBytes } : item)));
+    };
+
     void (async () => {
       await sleep(BETWEEN_DOWNLOADS_DELAY_MS);
       try {
-        await triggerDownload(next);
+        await triggerDownload(next, { onProgress });
         setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "complete" as const } : item)));
-      } catch {
-        setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "failed" as const } : item)));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Download failed";
+        setItems((prev) =>
+          prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "failed" as const, error: message } : item))
+        );
       } finally {
         isProcessingRef.current = false;
       }
