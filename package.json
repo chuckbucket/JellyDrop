@@ -1,0 +1,18 @@
+{
+  "name": "jellydrop",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Lightweight download portal for Jellyfin.",
+  "scripts": {
+    "dev": "concurrently -n backend,frontend -c blue,green \"npm run dev --workspace=backend\" \"npm run dev --workspace=frontend\"",
+    "build": "npm run build --workspace=frontend && npm run build --workspace=backend",
+    "start": "npm run start --workspace=backend"
+  },
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

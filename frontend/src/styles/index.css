@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@theme {
+  --color-jelly-bg: #0a0a0a;
+  --color-jelly-surface: #171717;
+  --color-jelly-surface-hover: #262626;
+  --color-jelly-accent: #a855f7;
+  --color-jelly-accent-hover: #9333ea;
+}
+
+html,
+body {
+  background-color: var(--color-jelly-bg);
+}
+
+/* Thin, unobtrusive scrollbar to match the dark theme. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-jelly-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-jelly-surface-hover);
+  border-radius: 9999px;
+}

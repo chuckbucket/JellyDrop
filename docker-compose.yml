@@ -1,0 +1,9 @@
+services:
+  jellydrop:
+    build: .
+    container_name: jellydrop
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-8080}:${PORT:-8080}"
+    restart: unless-stopped
