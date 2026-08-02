@@ -19,7 +19,9 @@ export function App() {
       <DownloadQueueProvider>
         <BrowserRouter>
           <NavBar />
-          <main className="min-h-[calc(100vh-57px)]">
+          {/* Extra bottom padding on every page so the fixed download panel (bottom-right) never
+              permanently covers the last row of a list — there's always room to scroll it clear. */}
+          <main className="min-h-[calc(100vh-57px)] pb-48">
             <Routes>
               <Route path="/" element={<Libraries />} />
               <Route path="/library/:id" element={<LibraryDetail />} />

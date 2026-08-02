@@ -59,9 +59,7 @@ function ItemStatusLine({ item }: { item: QueueItem }) {
 
 export function DownloadQueuePanel() {
   const { items, retry, clearCompleted, downloadFolderName, chooseDownloadFolder, supportsFolderPicker } = useDownloadQueue();
-  const [collapsed, setCollapsed] = useState(false);
-
-  if (items.length === 0) return null;
+  const [collapsed, setCollapsed] = useState(true);
 
   const remainingCount = items.filter(
     (item) => item.status === "waiting" || item.status === "downloading" || item.status === "saving"
@@ -85,8 +83,14 @@ export function DownloadQueuePanel() {
         </span>
         <span className="flex items-center gap-3 text-xs text-neutral-400">
           <span>
-            {remainingCount} remaining · {completeCount} complete
-            {failedCount > 0 && <span className="text-red-400"> · {failedCount} failed</span>}
+            {items.length === 0 ? (
+              "No downloads yet"
+            ) : (
+              <>
+                {remainingCount} remaining · {completeCount} complete
+                {failedCount > 0 && <span className="text-red-400"> · {failedCount} failed</span>}
+              </>
+            )}
           </span>
           <span>{collapsed ? "▲" : "▼"}</span>
         </span>
@@ -108,28 +112,34 @@ export function DownloadQueuePanel() {
               </button>
             </div>
           )}
-          <div className="max-h-80 overflow-y-auto border-t border-neutral-800">
-            {items.map((item) => (
-              <div
-                key={item.queueId}
-                className="flex items-center justify-between gap-2 border-b border-neutral-800/60 px-4 py-2 last:border-b-0"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm text-neutral-200">{item.name}</p>
-                  <ItemStatusLine item={item} />
+          {items.length === 0 ? (
+            <p className="border-t border-neutral-800 px-4 py-4 text-center text-xs text-neutral-500">
+              Downloads you start will show up here.
+            </p>
+          ) : (
+            <div className="max-h-80 overflow-y-auto border-t border-neutral-800">
+              {items.map((item) => (
+                <div
+                  key={item.queueId}
+                  className="flex items-center justify-between gap-2 border-b border-neutral-800/60 px-4 py-2 last:border-b-0"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-neutral-200">{item.name}</p>
+                    <ItemStatusLine item={item} />
+                  </div>
+                  {item.status === "failed" && (
+                    <button
+                      type="button"
+                      onClick={() => retry(item.queueId)}
+                      className="shrink-0 rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-800"
+                    >
+                      Retry
+                    </button>
+                  )}
                 </div>
-                {item.status === "failed" && (
-                  <button
-                    type="button"
-                    onClick={() => retry(item.queueId)}
-                    className="shrink-0 rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-800"
-                  >
-                    Retry
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
           {hasCompleted && (
             <button
               type="button"
