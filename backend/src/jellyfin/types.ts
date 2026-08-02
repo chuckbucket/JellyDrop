@@ -21,6 +21,7 @@ export interface JellyfinItem {
   SeriesId?: string;
   IndexNumber?: number;
   ParentIndexNumber?: number;
+  Overview?: string;
 }
 
 export interface JellyfinItemsResponse {

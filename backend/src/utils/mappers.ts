@@ -16,7 +16,7 @@ export function hasMediaFile(item: JellyfinItem): boolean {
 
 export function mapLibrary(folder: JellyfinVirtualFolder): LibraryDTO | null {
   if (folder.CollectionType !== "movies" && folder.CollectionType !== "tvshows") return null;
-  return { id: folder.ItemId, name: folder.Name, type: folder.CollectionType };
+  return { id: folder.ItemId, name: folder.Name, type: folder.CollectionType, posterUrl: posterUrl(folder.ItemId) };
 }
 
 export function mapMovie(item: JellyfinItem): MovieDTO {

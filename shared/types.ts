@@ -10,6 +10,7 @@ export interface LibraryDTO {
   id: string;
   name: string;
   type: LibraryType;
+  posterUrl: string;
 }
 
 export interface MovieDTO {
@@ -37,6 +38,7 @@ export interface ShowDetailDTO {
   id: string;
   name: string;
   year: number | null;
+  overview: string | null;
   posterUrl: string;
   seasons: SeasonSummaryDTO[];
 }

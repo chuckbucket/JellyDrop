@@ -26,12 +26,21 @@ export function Libraries() {
           <Link
             key={library.id}
             to={`/library/${library.id}`}
-            className="flex aspect-video flex-col items-center justify-center gap-2 rounded-xl border border-neutral-800 bg-[var(--color-jelly-surface)] transition-colors hover:bg-[var(--color-jelly-surface-hover)]"
+            className="group relative aspect-video overflow-hidden rounded-xl border border-neutral-800 bg-[var(--color-jelly-surface)] transition-colors hover:bg-[var(--color-jelly-surface-hover)]"
           >
-            <span className="text-lg font-semibold text-neutral-100">{library.name}</span>
-            <span className="text-xs tracking-wide text-neutral-500 uppercase">
-              {library.type === "movies" ? "Movies" : "TV Shows"}
-            </span>
+            <img
+              src={library.posterUrl}
+              alt=""
+              loading="lazy"
+              className="absolute inset-0 h-full w-full object-cover opacity-70 transition-opacity duration-200 group-hover:opacity-90"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+            <div className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 p-3 text-center">
+              <span className="text-lg font-semibold text-white drop-shadow">{library.name}</span>
+              <span className="text-xs tracking-wide text-neutral-300 uppercase drop-shadow">
+                {library.type === "movies" ? "Movies" : "TV Shows"}
+              </span>
+            </div>
           </Link>
         ))}
       </div>

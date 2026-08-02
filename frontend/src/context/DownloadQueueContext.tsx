@@ -34,33 +34,29 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function parseContentDispositionFilename(header: string | null): string | null {
-  if (!header) return null;
-  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
-  if (utf8Match) return decodeURIComponent(utf8Match[1]);
-  const quotedMatch = header.match(/filename="([^"]+)"/i);
-  return quotedMatch ? quotedMatch[1] : null;
-}
-
 async function triggerDownload(item: QueueItem): Promise<void> {
+  // Confirm the URL is actually good before handing off to the browser, so real failures (a stale
+  // link, a removed file) surface as "Failed" with a retry instead of silently doing nothing.
   const res = await fetch(item.downloadUrl);
   if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
     throw new Error(`Download failed with status ${res.status}`);
   }
-  // The backend builds the real sanitized filename server-side; prefer it over the queue's display name.
-  const filename = parseContentDispositionFilename(res.headers.get("content-disposition")) ?? item.name;
-  const blob = await res.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  try {
-    const anchor = document.createElement("a");
-    anchor.href = objectUrl;
-    anchor.download = filename;
-    document.body.appendChild(anchor);
-    anchor.click();
-    anchor.remove();
-  } finally {
-    URL.revokeObjectURL(objectUrl);
-  }
+  // Cancel the body instead of reading it — we don't want to buffer a multi-GB movie into memory
+  // just to check its status. The real transfer happens below, driven entirely by the browser.
+  await res.body?.cancel().catch(() => undefined);
+
+  // Let the browser handle the actual save natively via the backend's `Content-Disposition:
+  // attachment` header, instead of building a blob + object URL ourselves. Browsers never navigate
+  // the visible page away for an "attachment" response — they download it in the background — so
+  // this works reliably even in Safari/WebKit, where blob: URLs + the `download` attribute are known
+  // to be flaky (and when that fails, the fallback is the browser navigating the tab to the raw blob,
+  // which has no headers at all — for a video file that shows up as a blank/black page).
+  const anchor = document.createElement("a");
+  anchor.href = item.downloadUrl;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 export function DownloadQueueProvider({ children }: { children: ReactNode }) {

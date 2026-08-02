@@ -35,6 +35,8 @@ export function ShowDetail() {
   if (error) return <ErrorState message={error} />;
   if (!show) return <LoadingSpinner />;
 
+  const totalEpisodeCount = show.seasons.reduce((sum, season) => sum + season.episodeCount, 0);
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
       <div className="mb-8 flex flex-col gap-6 sm:flex-row">
@@ -42,7 +44,12 @@ export function ShowDetail() {
         <div className="flex flex-col gap-4">
           <div>
             <h1 className="text-3xl font-bold">{show.name}</h1>
-            {show.year && <p className="text-neutral-400">{show.year}</p>}
+            <p className="text-neutral-400">
+              {show.year}
+              {show.year && " · "}
+              {totalEpisodeCount} episode{totalEpisodeCount === 1 ? "" : "s"}
+            </p>
+            {show.overview && <p className="mt-3 max-w-2xl text-sm text-neutral-300">{show.overview}</p>}
           </div>
           <button
             type="button"

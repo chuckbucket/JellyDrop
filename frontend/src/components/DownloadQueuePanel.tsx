@@ -21,8 +21,10 @@ export function DownloadQueuePanel() {
 
   if (items.length === 0) return null;
 
-  const activeCount = items.filter((item) => item.status === "waiting" || item.status === "downloading").length;
-  const hasCompleted = items.some((item) => item.status === "complete");
+  const remainingCount = items.filter((item) => item.status === "waiting" || item.status === "downloading").length;
+  const completeCount = items.filter((item) => item.status === "complete").length;
+  const failedCount = items.filter((item) => item.status === "failed").length;
+  const hasCompleted = completeCount > 0;
 
   return (
     <div className="fixed right-4 bottom-4 z-50 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-neutral-800 bg-[var(--color-jelly-surface)] shadow-2xl">
@@ -33,11 +35,17 @@ export function DownloadQueuePanel() {
       >
         <span className="flex items-center gap-2 text-sm font-semibold text-neutral-100">
           Downloads
-          {activeCount > 0 && (
-            <span className="rounded-full bg-[var(--color-jelly-accent)] px-2 py-0.5 text-xs text-white">{activeCount}</span>
+          {remainingCount > 0 && (
+            <span className="rounded-full bg-[var(--color-jelly-accent)] px-2 py-0.5 text-xs text-white">{remainingCount}</span>
           )}
         </span>
-        <span className="text-neutral-400">{collapsed ? "▲" : "▼"}</span>
+        <span className="flex items-center gap-3 text-xs text-neutral-400">
+          <span>
+            {remainingCount} remaining · {completeCount} complete
+            {failedCount > 0 && <span className="text-red-400"> · {failedCount} failed</span>}
+          </span>
+          <span>{collapsed ? "▲" : "▼"}</span>
+        </span>
       </button>
 
       {!collapsed && (

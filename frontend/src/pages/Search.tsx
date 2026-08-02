@@ -27,6 +27,9 @@ export function Search() {
     return () => clearTimeout(handle);
   }, [query]);
 
+  const movies = results?.filter((result) => result.type === "movie") ?? [];
+  const series = results?.filter((result) => result.type === "series") ?? [];
+
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
       <h1 className="mb-6 text-2xl font-bold">Search</h1>
@@ -43,18 +46,38 @@ export function Search() {
 
       {!loading && results && results.length === 0 && <p className="text-neutral-400">No results for "{query}"</p>}
 
-      {!loading && results && results.length > 0 && (
-        <PosterGrid>
-          {results.map((result) => (
-            <PosterCard
-              key={result.id}
-              to={result.type === "movie" ? `/movies/${result.id}` : `/shows/${result.id}`}
-              posterUrl={result.posterUrl}
-              title={result.name}
-              subtitle={result.year ? String(result.year) : undefined}
-            />
-          ))}
-        </PosterGrid>
+      {!loading && movies.length > 0 && (
+        <section className="mb-10">
+          <h2 className="mb-3 text-xl font-semibold">Movies</h2>
+          <PosterGrid>
+            {movies.map((result) => (
+              <PosterCard
+                key={result.id}
+                to={`/movies/${result.id}`}
+                posterUrl={result.posterUrl}
+                title={result.name}
+                subtitle={result.year ? String(result.year) : undefined}
+              />
+            ))}
+          </PosterGrid>
+        </section>
+      )}
+
+      {!loading && series.length > 0 && (
+        <section>
+          <h2 className="mb-3 text-xl font-semibold">TV Series</h2>
+          <PosterGrid>
+            {series.map((result) => (
+              <PosterCard
+                key={result.id}
+                to={`/shows/${result.id}`}
+                posterUrl={result.posterUrl}
+                title={result.name}
+                subtitle={result.year ? String(result.year) : undefined}
+              />
+            ))}
+          </PosterGrid>
+        </section>
       )}
     </div>
   );

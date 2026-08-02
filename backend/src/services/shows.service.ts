@@ -47,17 +47,20 @@ async function getSeasonsWithEpisodeCounts(seriesId: string): Promise<SeasonSumm
     countBySeasonNumber.set(episode.ParentIndexNumber, (countBySeasonNumber.get(episode.ParentIndexNumber) ?? 0) + 1);
   }
 
-  return [...seasons].sort(byIndexNumber).map((season) => ({
-    id: season.Id,
-    name: season.Name,
-    indexNumber: season.IndexNumber ?? null,
-    episodeCount: season.IndexNumber !== undefined ? (countBySeasonNumber.get(season.IndexNumber) ?? 0) : 0,
-  }));
+  return [...seasons]
+    .sort(byIndexNumber)
+    .map((season) => ({
+      id: season.Id,
+      name: season.Name,
+      indexNumber: season.IndexNumber ?? null,
+      episodeCount: season.IndexNumber !== undefined ? (countBySeasonNumber.get(season.IndexNumber) ?? 0) : 0,
+    }))
+    .filter((season) => season.episodeCount > 0);
 }
 
 export async function getShowDetail(seriesId: string): Promise<ShowDetailDTO | null> {
   const [items, seasons] = await Promise.all([
-    jellyfinClient.getItemsByIds([seriesId], ["ProductionYear"]),
+    jellyfinClient.getItemsByIds([seriesId], ["ProductionYear", "Overview"]),
     getSeasonsWithEpisodeCounts(seriesId),
   ]);
   const item = items[0];
@@ -66,6 +69,7 @@ export async function getShowDetail(seriesId: string): Promise<ShowDetailDTO | n
     id: item.Id,
     name: item.Name,
     year: item.ProductionYear ?? null,
+    overview: item.Overview ?? null,
     posterUrl: `/api/image/${item.Id}`,
     seasons,
   };
