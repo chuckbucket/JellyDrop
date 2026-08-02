@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useDownloadQueue, type DownloadMethod, type QueueItem, type QueueItemStatus } from "../context/DownloadQueueContext";
+import { formatBytes } from "../utils/format";
 
 const statusLabel: Record<QueueItemStatus, string> = {
   waiting: "Waiting",
   downloading: "Downloading",
+  saving: "Saving to disk…",
   complete: "Complete",
   failed: "Failed",
 };
@@ -11,6 +13,7 @@ const statusLabel: Record<QueueItemStatus, string> = {
 const statusColor: Record<QueueItemStatus, string> = {
   waiting: "text-neutral-400",
   downloading: "text-sky-400",
+  saving: "text-amber-400",
   complete: "text-emerald-400",
   failed: "text-red-400",
 };
@@ -23,12 +26,41 @@ const methodOptions: Array<{ value: DownloadMethod; label: string }> = [
 
 function ItemStatusLine({ item }: { item: QueueItem }) {
   if (item.status === "downloading") {
+    // Only the "blob" method ever populates totalBytes — "direct" hands the whole transfer to the
+    // browser's own download manager, which reports nothing back to page JS at all.
+    if (item.totalBytes) {
+      const percent = Math.min(100, Math.round((item.receivedBytes / item.totalBytes) * 100));
+      return (
+        <div className="mt-1">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-700">
+            <div
+              className="h-full rounded-full bg-sky-400 transition-[width] duration-200"
+              style={{ width: `${percent}%` }}
+            />
+          </div>
+          <p className="mt-1 text-xs text-sky-400">
+            {percent}% · {formatBytes(item.receivedBytes)} / {formatBytes(item.totalBytes)}
+          </p>
+        </div>
+      );
+    }
     return (
       <div className="mt-1">
         <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-700">
           <div className="animate-indeterminate h-full w-1/3 rounded-full bg-sky-400" />
         </div>
         <p className="mt-1 text-xs text-sky-400">Downloading…</p>
+      </div>
+    );
+  }
+
+  if (item.status === "saving") {
+    return (
+      <div className="mt-1">
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-700">
+          <div className="h-full w-full animate-pulse rounded-full bg-amber-400" />
+        </div>
+        <p className="mt-1 text-xs text-amber-400">Saving to disk… (handled by your browser)</p>
       </div>
     );
   }
@@ -45,7 +77,9 @@ export function DownloadQueuePanel() {
   const { items, retry, clearCompleted, downloadMethod, setDownloadMethod } = useDownloadQueue();
   const [collapsed, setCollapsed] = useState(true);
 
-  const remainingCount = items.filter((item) => item.status === "waiting" || item.status === "downloading").length;
+  const remainingCount = items.filter(
+    (item) => item.status === "waiting" || item.status === "downloading" || item.status === "saving"
+  ).length;
   const completeCount = items.filter((item) => item.status === "complete").length;
   const failedCount = items.filter((item) => item.status === "failed").length;
   const hasCompleted = completeCount > 0;

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
-export type QueueItemStatus = "waiting" | "downloading" | "complete" | "failed";
+export type QueueItemStatus = "waiting" | "downloading" | "saving" | "complete" | "failed";
 
 export interface QueueItem {
   /** Unique per enqueue — the same media id can be queued more than once (e.g. retried across sessions). */
@@ -9,6 +9,10 @@ export interface QueueItem {
   name: string;
   downloadUrl: string;
   status: QueueItemStatus;
+  /** Bytes received so far. Only ever populated by the "blob" method — "direct" has no visibility into transfer progress at all. */
+  receivedBytes: number;
+  /** From the response's Content-Length; null if unknown or not applicable to this item's method. */
+  totalBytes: number | null;
   error?: string;
 }
 
@@ -20,10 +24,11 @@ export interface EnqueueInput {
 
 /**
  * "direct" hands the URL straight to the browser's own download manager — zero memory used on
- * this page, but on plain HTTP, Chrome shows its own "can't download securely" confirmation per
- * file. "blob" fetches the whole file into memory first then hands it off as a blob: URL — Firefox
- * treats that as a page-generated file with no save-location prompt, but it's the same
- * whole-file-in-memory approach that crashed Chrome on a large movie, so it's opt-in, not default.
+ * this page and real progress is fundamentally impossible to show (the browser never reports it to
+ * page JS), but on plain HTTP, Chrome shows its own "can't download securely" confirmation per
+ * file. "blob" reads the file into memory ourselves, chunk by chunk, so it can show real progress
+ * and Firefox treats the result as a page-generated file with no save-location prompt — but it's
+ * the same whole-file-in-memory approach that crashed Chrome on a large movie, so it's opt-in.
  */
 export type DownloadMethod = "auto" | "direct" | "blob";
 
@@ -46,6 +51,10 @@ const DOWNLOAD_METHOD_STORAGE_KEY = "jellydrop:downloadMethod";
 // for). There's no capability to feature-detect this; it's an observed behavioral difference, not
 // a preference, so a UA check is the best "auto" default available.
 const isFirefox = typeof navigator !== "undefined" && /firefox/i.test(navigator.userAgent);
+
+// Re-rendering on every chunk (which can arrive many times a second) would be wasteful; this caps
+// how often the UI actually updates while still feeling live.
+const PROGRESS_UPDATE_THROTTLE_MS = 200;
 
 function loadStoredMethod(): DownloadMethod {
   if (typeof window === "undefined") return "auto";
@@ -75,12 +84,18 @@ function nextQueueId(): string {
   return `${Date.now()}-${queueIdCounter}`;
 }
 
+interface DownloadCallbacks {
+  onProgress: (receivedBytes: number, totalBytes: number | null) => void;
+  /** Fired once every byte has been received over the network, before the browser writes it to disk. Blob method only. */
+  onSaving: () => void;
+}
+
 /**
  * Every file goes to the browser's standard Downloads location, automatically — no File System
  * Access API, no "choose a folder" dialog from JellyDrop itself. Which of the two transfer methods
  * below actually runs is resolved by the caller from the current DownloadMethod setting.
  */
-async function triggerDownload(item: QueueItem, method: "direct" | "blob"): Promise<void> {
+async function triggerDownload(item: QueueItem, method: "direct" | "blob", { onProgress, onSaving }: DownloadCallbacks): Promise<void> {
   const res = await fetch(item.downloadUrl);
   if (!res.ok) {
     await res.body?.cancel().catch(() => undefined);
@@ -88,6 +103,8 @@ async function triggerDownload(item: QueueItem, method: "direct" | "blob"): Prom
   }
 
   if (method === "direct") {
+    // The browser's own download manager reports nothing back to page JS — there is no progress
+    // to show here, by design of the approach, not an oversight.
     await res.body?.cancel().catch(() => undefined);
     const anchor = document.createElement("a");
     anchor.href = item.downloadUrl;
@@ -100,8 +117,32 @@ async function triggerDownload(item: QueueItem, method: "direct" | "blob"): Prom
     return;
   }
 
+  const totalBytes = Number(res.headers.get("content-length")) || null;
   const filename = parseContentDispositionFilename(res.headers.get("content-disposition")) ?? item.name;
-  const blob = await res.blob();
+
+  const reader = res.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  if (reader) {
+    let receivedBytes = 0;
+    let lastReportedAt = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      receivedBytes += value.byteLength;
+      const now = Date.now();
+      if (now - lastReportedAt >= PROGRESS_UPDATE_THROTTLE_MS) {
+        lastReportedAt = now;
+        onProgress(receivedBytes, totalBytes);
+      }
+    }
+    onProgress(receivedBytes, totalBytes);
+  }
+  onSaving();
+
+  // fetch() bodies are always backed by a real ArrayBuffer at runtime; the stricter generic
+  // ArrayBufferLike typing (which also admits SharedArrayBuffer) is what TS is objecting to here.
+  const blob = new Blob(chunks as BlobPart[]);
   const objectUrl = URL.createObjectURL(blob);
   try {
     const anchor = document.createElement("a");
@@ -129,12 +170,25 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const enqueue = useCallback((inputs: EnqueueInput[]) => {
-    setItems((prev) => [...prev, ...inputs.map((input) => ({ ...input, queueId: nextQueueId(), status: "waiting" as const }))]);
+    setItems((prev) => [
+      ...prev,
+      ...inputs.map((input) => ({
+        ...input,
+        queueId: nextQueueId(),
+        status: "waiting" as const,
+        receivedBytes: 0,
+        totalBytes: null,
+      })),
+    ]);
   }, []);
 
   const retry = useCallback((queueId: string) => {
     setItems((prev) =>
-      prev.map((item) => (item.queueId === queueId ? { ...item, status: "waiting" as const, error: undefined } : item))
+      prev.map((item) =>
+        item.queueId === queueId
+          ? { ...item, status: "waiting" as const, receivedBytes: 0, totalBytes: null, error: undefined }
+          : item
+      )
     );
   }, []);
 
@@ -158,10 +212,17 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
     isProcessingRef.current = true;
     setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "downloading" as const } : item)));
 
+    const onProgress = (receivedBytes: number, totalBytes: number | null) => {
+      setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, receivedBytes, totalBytes } : item)));
+    };
+    const onSaving = () => {
+      setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "saving" as const } : item)));
+    };
+
     void (async () => {
       await sleep(delayMs);
       try {
-        await triggerDownload(next, resolvedMethod);
+        await triggerDownload(next, resolvedMethod, { onProgress, onSaving });
         setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "complete" as const } : item)));
       } catch (err) {
         const message = err instanceof Error ? err.message : "Download failed";
