@@ -34,6 +34,16 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// crypto.randomUUID() only exists in secure contexts (HTTPS or localhost) — plain-HTTP LAN access
+// (e.g. http://<server-ip>:8080, how most self-hosted setups like Unraid are reached) doesn't
+// qualify, so calling it there throws and takes down the whole page. A counter is all we need:
+// uniqueness only has to hold within this tab's in-memory queue.
+let queueIdCounter = 0;
+function nextQueueId(): string {
+  queueIdCounter += 1;
+  return `${Date.now()}-${queueIdCounter}`;
+}
+
 async function triggerDownload(item: QueueItem): Promise<void> {
   // Confirm the URL is actually good before handing off to the browser, so real failures (a stale
   // link, a removed file) surface as "Failed" with a retry instead of silently doing nothing.
@@ -66,7 +76,7 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
   const enqueue = useCallback((inputs: EnqueueInput[]) => {
     setItems((prev) => [
       ...prev,
-      ...inputs.map((input) => ({ ...input, queueId: crypto.randomUUID(), status: "waiting" as const })),
+      ...inputs.map((input) => ({ ...input, queueId: nextQueueId(), status: "waiting" as const })),
     ]);
   }, []);
 
