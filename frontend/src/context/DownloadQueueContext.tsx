@@ -27,6 +27,17 @@ interface DownloadQueueContextValue {
   enqueue: (inputs: EnqueueInput[]) => void;
   retry: (queueId: string) => void;
   clearCompleted: () => void;
+  /**
+   * Call this FIRST, synchronously in response to a click, before enqueueing anything. Resolves to
+   * the chosen folder (prompting once per session if needed) or null to fall back to browser
+   * downloads — either because the browser doesn't support it (Firefox/Safari) or the user declined.
+   */
+  ensureDownloadFolder: () => Promise<FileSystemDirectoryHandle | null>;
+  /** Explicit re-prompt for a "change folder" control — always shows the picker again. */
+  chooseDownloadFolder: () => Promise<void>;
+  /** The chosen folder's own name (browsers never expose its full path) — null if none chosen yet. */
+  downloadFolderName: string | null;
+  supportsFolderPicker: boolean;
 }
 
 const DownloadQueueContext = createContext<DownloadQueueContextValue | null>(null);
@@ -37,6 +48,8 @@ const BETWEEN_DOWNLOADS_DELAY_MS = 300;
 // Re-rendering on every chunk (which can arrive many times a second) would be wasteful; this caps
 // how often the UI actually updates while still feeling live.
 const PROGRESS_UPDATE_THROTTLE_MS = 200;
+
+const supportsFolderPicker = typeof window !== "undefined" && typeof window.showDirectoryPicker === "function";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -62,20 +75,56 @@ function parseContentDispositionFilename(header: string | null): string | null {
 
 interface DownloadCallbacks {
   onProgress: (receivedBytes: number, totalBytes: number | null) => void;
-  /** Fired once every byte has been received over the network, before the browser writes it to disk. */
+  /** Fired only on the no-folder-chosen fallback path, once every byte is received but before the browser writes it to disk. */
   onSaving: () => void;
+}
+
+/** Writes the stream straight to disk as bytes arrive — one real progress bar, no separate "saving" phase. */
+async function writeToDirectory(
+  directoryHandle: FileSystemDirectoryHandle,
+  filename: string,
+  body: ReadableStream<Uint8Array>,
+  totalBytes: number | null,
+  onProgress: (receivedBytes: number, totalBytes: number | null) => void
+): Promise<void> {
+  const fileHandle = await directoryHandle.getFileHandle(filename, { create: true });
+  const writable = await fileHandle.createWritable();
+  const reader = body.getReader();
+  let receivedBytes = 0;
+  let lastReportedAt = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      // Same runtime-safe cast as the Blob path below — fetch() chunks are always ArrayBuffer-backed.
+      await writable.write(value as BufferSource);
+      receivedBytes += value.byteLength;
+      const now = Date.now();
+      if (now - lastReportedAt >= PROGRESS_UPDATE_THROTTLE_MS) {
+        lastReportedAt = now;
+        onProgress(receivedBytes, totalBytes);
+      }
+    }
+    onProgress(receivedBytes, totalBytes);
+  } finally {
+    await writable.close();
+  }
 }
 
 /**
  * Reads the response as a stream so the queue can report real byte-level progress, and only
  * resolves once every byte has actually arrived — "complete" here means complete, not "handed off".
  *
- * This happens in two genuinely distinct phases, both real: first the file is received into memory
- * (tracked byte-for-byte below), then the browser writes that data out to your actual downloads
- * folder as a separate step it controls — that's what "saving" reflects, rather than leaving the UI
- * looking finished while the browser is still visibly working on it.
+ * With a chosen folder, bytes are written directly to disk as they arrive (one accurate progress
+ * bar, genuinely done when it says done). Without one — no folder chosen, or an unsupported browser
+ * — this falls back to buffering into memory and handing the finished file to the browser's own
+ * download UI, which is why that path has a distinct "saving" phase afterward.
  */
-async function triggerDownload(item: QueueItem, { onProgress, onSaving }: DownloadCallbacks): Promise<void> {
+async function triggerDownload(
+  item: QueueItem,
+  directoryHandle: FileSystemDirectoryHandle | null,
+  { onProgress, onSaving }: DownloadCallbacks
+): Promise<void> {
   const res = await fetch(item.downloadUrl);
   if (!res.ok || !res.body) {
     await res.body?.cancel().catch(() => undefined);
@@ -84,6 +133,11 @@ async function triggerDownload(item: QueueItem, { onProgress, onSaving }: Downlo
 
   const totalBytes = Number(res.headers.get("content-length")) || null;
   const filename = parseContentDispositionFilename(res.headers.get("content-disposition")) ?? item.name;
+
+  if (directoryHandle) {
+    await writeToDirectory(directoryHandle, filename, res.body, totalBytes, onProgress);
+    return;
+  }
 
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -125,6 +179,8 @@ async function triggerDownload(item: QueueItem, { onProgress, onSaving }: Downlo
 
 export function DownloadQueueProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<QueueItem[]>([]);
+  const [directoryHandle, setDirectoryHandle] = useState<FileSystemDirectoryHandle | null>(null);
+  const [folderPickerDeclined, setFolderPickerDeclined] = useState(false);
   const isProcessingRef = useRef(false);
 
   const enqueue = useCallback((inputs: EnqueueInput[]) => {
@@ -154,6 +210,33 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
     setItems((prev) => prev.filter((item) => item.status !== "complete"));
   }, []);
 
+  // MUST be called synchronously from a click handler — showDirectoryPicker() requires a direct
+  // user gesture and throws if there's been an intervening await (e.g. a network round-trip).
+  const ensureDownloadFolder = useCallback(async (): Promise<FileSystemDirectoryHandle | null> => {
+    if (directoryHandle) return directoryHandle;
+    if (folderPickerDeclined || !supportsFolderPicker || !window.showDirectoryPicker) return null;
+    try {
+      const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+      setDirectoryHandle(handle);
+      return handle;
+    } catch {
+      // Dismissed the picker — don't keep re-prompting on every click for the rest of the session.
+      setFolderPickerDeclined(true);
+      return null;
+    }
+  }, [directoryHandle, folderPickerDeclined]);
+
+  const chooseDownloadFolder = useCallback(async (): Promise<void> => {
+    if (!supportsFolderPicker || !window.showDirectoryPicker) return;
+    try {
+      const handle = await window.showDirectoryPicker({ mode: "readwrite" });
+      setDirectoryHandle(handle);
+      setFolderPickerDeclined(false);
+    } catch {
+      // Dismissed — leave whatever folder (or lack of one) already in place.
+    }
+  }, []);
+
   // Processes the queue strictly one item at a time (FIFO); a failed item never blocks the rest.
   useEffect(() => {
     if (isProcessingRef.current) return;
@@ -173,7 +256,7 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
     void (async () => {
       await sleep(BETWEEN_DOWNLOADS_DELAY_MS);
       try {
-        await triggerDownload(next, { onProgress, onSaving });
+        await triggerDownload(next, directoryHandle, { onProgress, onSaving });
         setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "complete" as const } : item)));
       } catch (err) {
         const message = err instanceof Error ? err.message : "Download failed";
@@ -184,10 +267,21 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
         isProcessingRef.current = false;
       }
     })();
-  }, [items]);
+  }, [items, directoryHandle]);
 
   return (
-    <DownloadQueueContext.Provider value={{ items, enqueue, retry, clearCompleted }}>
+    <DownloadQueueContext.Provider
+      value={{
+        items,
+        enqueue,
+        retry,
+        clearCompleted,
+        ensureDownloadFolder,
+        chooseDownloadFolder,
+        downloadFolderName: directoryHandle?.name ?? null,
+        supportsFolderPicker,
+      }}
+    >
       {children}
     </DownloadQueueContext.Provider>
   );

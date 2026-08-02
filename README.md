@@ -14,7 +14,10 @@ filesystem paths are never exposed to the browser.
 - Download at three levels: single episode, entire season, or entire series
 - Site-wide search across movies and TV shows
 - A persistent download queue (bottom-right) that processes downloads one at a time automatically,
-  with Waiting / Downloading / Complete / Failed status and one-click retry
+  with Waiting / Downloading / Complete / Failed status, real byte-level progress, and one-click retry
+- On Chrome/Edge, pick a download folder once (e.g. an external drive or SD card) and every
+  subsequent download writes straight there with no further prompts — Firefox/Safari fall back to
+  normal browser downloads automatically
 - Dark, responsive UI
 - Single Docker container, configured entirely with three environment variables
 
@@ -22,11 +25,11 @@ filesystem paths are never exposed to the browser.
 
 JellyDrop is configured with environment variables only — there is no frontend configuration.
 
-| Variable | Description |
-|---|---|
-| `JELLYFIN_URL` | Base URL of your Jellyfin server, e.g. `http://192.168.1.50:8096` |
-| `JELLYFIN_API_KEY` | An API key generated in Jellyfin under Dashboard → API Keys |
-| `PORT` | Port JellyDrop listens on (default `8080`) |
+| Variable           | Description                                                       |
+| ------------------ | ----------------------------------------------------------------- |
+| `JELLYFIN_URL`     | Base URL of your Jellyfin server, e.g. `http://192.168.1.50:8096` |
+| `JELLYFIN_API_KEY` | An API key generated in Jellyfin under Dashboard → API Keys       |
+| `PORT`             | Port JellyDrop listens on (default `8080`)                        |
 
 Copy `.env.example` to `.env` and fill in your values:
 
@@ -55,7 +58,7 @@ like an Unraid server doesn't need to build anything — just pull and run:
 ```yaml
 services:
   jellydrop:
-    image: ghcr.io/<your-github-username>/jellydrop:latest
+    image: ghcr.io/chuckbucket/jellydrop:latest
     container_name: jellydrop
     env_file:
       - .env
@@ -116,20 +119,20 @@ order, one at a time.
 
 ## API
 
-| Route | Description |
-|---|---|
-| `GET /api/libraries` | List movie/TV libraries |
-| `GET /api/library/:id` | Contents of one library |
-| `GET /api/movies` | Movies (optionally filtered by `libraryId`, or looked up by `ids`) |
-| `GET /api/shows` | TV series (optionally filtered by `libraryId`) |
-| `GET /api/show/:id` | A series' seasons, with episode counts |
-| `GET /api/season/:id` | A season's episode list |
-| `GET /api/search?q=` | Search movies and series |
-| `GET /api/download/movie/:id` | Streams the movie's media file |
-| `GET /api/download/episode/:id` | Streams the episode's media file |
-| `GET /api/download/season/:id` | Ordered download manifest for a season |
-| `GET /api/download/show/:id` | Ordered download manifest for an entire series |
-| `GET /api/image/:id` | Poster image proxy (keeps the Jellyfin API key server-side) |
+| Route                           | Description                                                        |
+| ------------------------------- | ------------------------------------------------------------------ |
+| `GET /api/libraries`            | List movie/TV libraries                                            |
+| `GET /api/library/:id`          | Contents of one library                                            |
+| `GET /api/movies`               | Movies (optionally filtered by `libraryId`, or looked up by `ids`) |
+| `GET /api/shows`                | TV series (optionally filtered by `libraryId`)                     |
+| `GET /api/show/:id`             | A series' seasons, with episode counts                             |
+| `GET /api/season/:id`           | A season's episode list                                            |
+| `GET /api/search?q=`            | Search movies and series                                           |
+| `GET /api/download/movie/:id`   | Streams the movie's media file                                     |
+| `GET /api/download/episode/:id` | Streams the episode's media file                                   |
+| `GET /api/download/season/:id`  | Ordered download manifest for a season                             |
+| `GET /api/download/show/:id`    | Ordered download manifest for an entire series                     |
+| `GET /api/image/:id`            | Poster image proxy (keeps the Jellyfin API key server-side)        |
 
 ## Not in this MVP (by design)
 

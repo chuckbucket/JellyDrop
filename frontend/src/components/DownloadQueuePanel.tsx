@@ -58,7 +58,7 @@ function ItemStatusLine({ item }: { item: QueueItem }) {
 }
 
 export function DownloadQueuePanel() {
-  const { items, retry, clearCompleted } = useDownloadQueue();
+  const { items, retry, clearCompleted, downloadFolderName, chooseDownloadFolder, supportsFolderPicker } = useDownloadQueue();
   const [collapsed, setCollapsed] = useState(false);
 
   if (items.length === 0) return null;
@@ -94,6 +94,20 @@ export function DownloadQueuePanel() {
 
       {!collapsed && (
         <>
+          {supportsFolderPicker && (
+            <div className="flex items-center justify-between gap-2 border-t border-neutral-800 px-4 py-2 text-xs text-neutral-400">
+              <span className="truncate">
+                Saving to: <span className="text-neutral-200">{downloadFolderName ?? "browser default"}</span>
+              </span>
+              <button
+                type="button"
+                onClick={chooseDownloadFolder}
+                className="shrink-0 rounded-md border border-neutral-700 px-2 py-1 text-neutral-200 hover:bg-neutral-800"
+              >
+                Change
+              </button>
+            </div>
+          )}
           <div className="max-h-80 overflow-y-auto border-t border-neutral-800">
             {items.map((item) => (
               <div

@@ -9,6 +9,7 @@ export async function getMovieFilename(movieId: string): Promise<string | null> 
   const items = await jellyfinClient.getItemsByIds([movieId], ["ProductionYear", "Container"]);
   const item = items[0];
   if (!item || !hasMediaFile(item)) return null;
+  console.log(`Downloading movie: ${item.Name}${item.ProductionYear ? ` (${item.ProductionYear})` : ""}`);
   return buildMovieFilename(item.Name, item.ProductionYear ?? null, item.Container ?? "mkv");
 }
 
@@ -19,7 +20,14 @@ export async function getEpisodeFilename(episodeId: string): Promise<string | nu
   );
   const item = items[0];
   if (!item || !hasMediaFile(item)) return null;
+  console.log(`Downloading TV series episode: ${item.SeriesName ?? "Series"} ${episodeCode(item)} - ${item.Name}`);
   return episodeFilename(item);
+}
+
+function episodeCode(episode: JellyfinItem): string {
+  const season = String(episode.ParentIndexNumber ?? 0).padStart(2, "0");
+  const number = String(episode.IndexNumber ?? 0).padStart(2, "0");
+  return `S${season}E${number}`;
 }
 
 function episodeFilename(episode: JellyfinItem): string {
