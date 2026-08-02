@@ -25,3 +25,17 @@ body {
   background: var(--color-jelly-surface-hover);
   border-radius: 9999px;
 }
+
+/* Indeterminate progress bar: we have no real percentage for downloads (see DownloadQueueContext),
+   so this signals "actively working" without claiming a false completion amount. */
+@keyframes indeterminate-progress {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+.animate-indeterminate {
+  animation: indeterminate-progress 1.2s ease-in-out infinite;
+}

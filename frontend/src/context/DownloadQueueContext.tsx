@@ -18,28 +18,40 @@ export interface EnqueueInput {
   downloadUrl: string;
 }
 
+/**
+ * "direct" hands the URL straight to the browser's own download manager — zero memory used on
+ * this page, but on plain HTTP, Chrome shows its own "can't download securely" confirmation per
+ * file. "blob" fetches the whole file into memory first then hands it off as a blob: URL — Firefox
+ * treats that as a page-generated file with no save-location prompt, but it's the same
+ * whole-file-in-memory approach that crashed Chrome on a large movie, so it's opt-in, not default.
+ */
+export type DownloadMethod = "auto" | "direct" | "blob";
+
 interface DownloadQueueContextValue {
   items: QueueItem[];
   enqueue: (inputs: EnqueueInput[]) => void;
   retry: (queueId: string) => void;
   clearCompleted: () => void;
+  downloadMethod: DownloadMethod;
+  setDownloadMethod: (method: DownloadMethod) => void;
 }
 
 const DownloadQueueContext = createContext<DownloadQueueContextValue | null>(null);
 
+const DOWNLOAD_METHOD_STORAGE_KEY = "jellydrop:downloadMethod";
+
 // Firefox (including Firefox for Android) shows its own "where do you want to save this" system
-// dialog for every plain-link download — painful for a 10+ episode season — but treats a blob: URL
-// as a page-generated file and saves it directly with no prompt. There's no capability to feature-
-// detect this; it's a real, observed behavioral difference, not a preference, so a UA check is the
-// only way to route around it.
+// dialog for every plain-link download — but treats a blob: URL as a page-generated file and saves
+// it directly with no prompt (unconfirmed in practice — that's exactly what the method toggle is
+// for). There's no capability to feature-detect this; it's an observed behavioral difference, not
+// a preference, so a UA check is the best "auto" default available.
 const isFirefox = typeof navigator !== "undefined" && /firefox/i.test(navigator.userAgent);
 
-// A pause between sequential downloads keeps well clear of browsers' "multiple automatic downloads"
-// heuristics. On plain HTTP (no TLS), Chrome also shows its own "can't be downloaded securely"
-// confirmation for every plain-link download — and firing the next one too soon replaces that
-// dialog before it can be answered, silently dropping the file. Firefox's blob-based path doesn't
-// hit that dialog at all, so it only needs the short anti-throttling pause.
-const BETWEEN_DOWNLOADS_DELAY_MS = isFirefox ? 300 : 4000;
+function loadStoredMethod(): DownloadMethod {
+  if (typeof window === "undefined") return "auto";
+  const stored = window.localStorage.getItem(DOWNLOAD_METHOD_STORAGE_KEY);
+  return stored === "direct" || stored === "blob" || stored === "auto" ? stored : "auto";
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -64,36 +76,27 @@ function nextQueueId(): string {
 }
 
 /**
- * Every file goes to the browser's standard Downloads location, automatically, with no folder
- * prompt of any kind — no File System Access API, no "choose a folder" dialog.
- *
- * On every browser except Firefox, we never read the response body ourselves: a movie-sized file
- * buffered into JS memory (reading it in chunks to show byte-level progress) is exactly what
- * crashed mobile Chrome at 100% — the tab's memory limit couldn't hold the whole file plus the copy
- * needed to assemble it into a Blob. A plain navigation to the real URL hands the entire
- * network-to-disk transfer to the browser's own download manager instead, streaming straight
- * through without ever holding the file in this page's memory.
- *
- * Firefox needs the opposite trade: it prompts for a save location on every plain-link download,
- * which makes a whole-season queue painful, but saves a blob: URL directly with no prompt. We still
- * avoid manual chunk-by-chunk buffering there (res.blob() lets the browser assemble it instead of
- * us copying chunks into a second buffer), but the whole file is briefly in memory either way —
- * if this turns out to crash Firefox on very large files too, it'll need a different fix.
+ * Every file goes to the browser's standard Downloads location, automatically — no File System
+ * Access API, no "choose a folder" dialog from JellyDrop itself. Which of the two transfer methods
+ * below actually runs is resolved by the caller from the current DownloadMethod setting.
  */
-async function triggerDownload(item: QueueItem): Promise<void> {
+async function triggerDownload(item: QueueItem, method: "direct" | "blob"): Promise<void> {
   const res = await fetch(item.downloadUrl);
   if (!res.ok) {
     await res.body?.cancel().catch(() => undefined);
     throw new Error(`Download failed with status ${res.status}`);
   }
 
-  if (!isFirefox) {
+  if (method === "direct") {
     await res.body?.cancel().catch(() => undefined);
     const anchor = document.createElement("a");
     anchor.href = item.downloadUrl;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
+    // No way to know when the browser's own download manager actually finishes — this pause just
+    // keeps "Complete" from flashing up before the browser has even shown its own confirmation.
+    await sleep(1500);
     return;
   }
 
@@ -107,8 +110,8 @@ async function triggerDownload(item: QueueItem): Promise<void> {
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
-    // The whole file is already in memory here — this pause is just margin for Firefox to start
-    // reading the blob before we free it, not racing a live network transfer.
+    // The whole file is already in memory here — this pause is just margin for the browser to
+    // start reading the blob before we free it, not racing a live network transfer.
     await sleep(2000);
   } finally {
     URL.revokeObjectURL(objectUrl);
@@ -117,7 +120,13 @@ async function triggerDownload(item: QueueItem): Promise<void> {
 
 export function DownloadQueueProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<QueueItem[]>([]);
+  const [downloadMethod, setDownloadMethodState] = useState<DownloadMethod>(loadStoredMethod);
   const isProcessingRef = useRef(false);
+
+  const setDownloadMethod = useCallback((method: DownloadMethod) => {
+    setDownloadMethodState(method);
+    window.localStorage.setItem(DOWNLOAD_METHOD_STORAGE_KEY, method);
+  }, []);
 
   const enqueue = useCallback((inputs: EnqueueInput[]) => {
     setItems((prev) => [...prev, ...inputs.map((input) => ({ ...input, queueId: nextQueueId(), status: "waiting" as const }))]);
@@ -139,13 +148,20 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
     const next = items.find((item) => item.status === "waiting");
     if (!next) return;
 
+    const resolvedMethod: "direct" | "blob" =
+      downloadMethod === "auto" ? (isFirefox ? "blob" : "direct") : downloadMethod;
+    // Chrome's per-file "can't download securely" warning (direct method, plain HTTP) needs real
+    // breathing room so the next download doesn't replace a still-pending confirmation; the blob
+    // method doesn't hit that dialog, so it only needs the short anti-throttling pause.
+    const delayMs = resolvedMethod === "direct" ? 4000 : 300;
+
     isProcessingRef.current = true;
     setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "downloading" as const } : item)));
 
     void (async () => {
-      await sleep(BETWEEN_DOWNLOADS_DELAY_MS);
+      await sleep(delayMs);
       try {
-        await triggerDownload(next);
+        await triggerDownload(next, resolvedMethod);
         setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "complete" as const } : item)));
       } catch (err) {
         const message = err instanceof Error ? err.message : "Download failed";
@@ -156,10 +172,12 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
         isProcessingRef.current = false;
       }
     })();
-  }, [items]);
+  }, [items, downloadMethod]);
 
   return (
-    <DownloadQueueContext.Provider value={{ items, enqueue, retry, clearCompleted }}>{children}</DownloadQueueContext.Provider>
+    <DownloadQueueContext.Provider value={{ items, enqueue, retry, clearCompleted, downloadMethod, setDownloadMethod }}>
+      {children}
+    </DownloadQueueContext.Provider>
   );
 }
 
