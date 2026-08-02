@@ -27,12 +27,30 @@ interface DownloadQueueContextValue {
 
 const DownloadQueueContext = createContext<DownloadQueueContextValue | null>(null);
 
-// A short pause between sequential downloads keeps well clear of browsers' "multiple automatic
-// downloads" heuristics — triggering many in a tight loop is what causes repeated permission prompts.
-const BETWEEN_DOWNLOADS_DELAY_MS = 300;
+// Firefox (including Firefox for Android) shows its own "where do you want to save this" system
+// dialog for every plain-link download — painful for a 10+ episode season — but treats a blob: URL
+// as a page-generated file and saves it directly with no prompt. There's no capability to feature-
+// detect this; it's a real, observed behavioral difference, not a preference, so a UA check is the
+// only way to route around it.
+const isFirefox = typeof navigator !== "undefined" && /firefox/i.test(navigator.userAgent);
+
+// A pause between sequential downloads keeps well clear of browsers' "multiple automatic downloads"
+// heuristics. On plain HTTP (no TLS), Chrome also shows its own "can't be downloaded securely"
+// confirmation for every plain-link download — and firing the next one too soon replaces that
+// dialog before it can be answered, silently dropping the file. Firefox's blob-based path doesn't
+// hit that dialog at all, so it only needs the short anti-throttling pause.
+const BETWEEN_DOWNLOADS_DELAY_MS = isFirefox ? 300 : 4000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseContentDispositionFilename(header: string | null): string | null {
+  if (!header) return null;
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match) return decodeURIComponent(utf8Match[1]);
+  const quotedMatch = header.match(/filename="([^"]+)"/i);
+  return quotedMatch ? quotedMatch[1] : null;
 }
 
 // crypto.randomUUID() only exists in secure contexts (HTTPS or localhost) — plain-HTTP LAN access
@@ -47,27 +65,54 @@ function nextQueueId(): string {
 
 /**
  * Every file goes to the browser's standard Downloads location, automatically, with no folder
- * prompt of any kind — no File System Access API, no "choose a folder" dialog. That also means we
- * never read the response body ourselves: a movie-sized file buffered into JS memory (the previous
- * approach, to show byte-level progress) is exactly what crashed mobile Chrome at 100% — the tab's
- * memory limit couldn't hold the whole file plus the copy needed to assemble it into a Blob. A plain
- * navigation to the real URL hands the entire network-to-disk transfer to the browser's own download
- * manager instead, which streams straight through without ever holding the file in this page's memory.
+ * prompt of any kind — no File System Access API, no "choose a folder" dialog.
+ *
+ * On every browser except Firefox, we never read the response body ourselves: a movie-sized file
+ * buffered into JS memory (reading it in chunks to show byte-level progress) is exactly what
+ * crashed mobile Chrome at 100% — the tab's memory limit couldn't hold the whole file plus the copy
+ * needed to assemble it into a Blob. A plain navigation to the real URL hands the entire
+ * network-to-disk transfer to the browser's own download manager instead, streaming straight
+ * through without ever holding the file in this page's memory.
+ *
+ * Firefox needs the opposite trade: it prompts for a save location on every plain-link download,
+ * which makes a whole-season queue painful, but saves a blob: URL directly with no prompt. We still
+ * avoid manual chunk-by-chunk buffering there (res.blob() lets the browser assemble it instead of
+ * us copying chunks into a second buffer), but the whole file is briefly in memory either way —
+ * if this turns out to crash Firefox on very large files too, it'll need a different fix.
  */
 async function triggerDownload(item: QueueItem): Promise<void> {
-  // A real (if brief) status check, so a stale link or removed file surfaces as "Failed" with a
-  // retry — we just don't read the body ourselves.
   const res = await fetch(item.downloadUrl);
-  await res.body?.cancel().catch(() => undefined);
   if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
     throw new Error(`Download failed with status ${res.status}`);
   }
 
-  const anchor = document.createElement("a");
-  anchor.href = item.downloadUrl;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
+  if (!isFirefox) {
+    await res.body?.cancel().catch(() => undefined);
+    const anchor = document.createElement("a");
+    anchor.href = item.downloadUrl;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    return;
+  }
+
+  const filename = parseContentDispositionFilename(res.headers.get("content-disposition")) ?? item.name;
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    // The whole file is already in memory here — this pause is just margin for Firefox to start
+    // reading the blob before we free it, not racing a live network transfer.
+    await sleep(2000);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 export function DownloadQueueProvider({ children }: { children: ReactNode }) {
