@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { useDownloadQueue, type QueueItem, type QueueItemStatus } from "../context/DownloadQueueContext";
+import { formatBytes } from "../utils/format";
 
 const statusLabel: Record<QueueItemStatus, string> = {
   waiting: "Waiting",
   downloading: "Downloading",
+  saving: "Saving to disk…",
   complete: "Complete",
   failed: "Failed",
 };
@@ -11,21 +13,10 @@ const statusLabel: Record<QueueItemStatus, string> = {
 const statusColor: Record<QueueItemStatus, string> = {
   waiting: "text-neutral-400",
   downloading: "text-sky-400",
+  saving: "text-amber-400",
   complete: "text-emerald-400",
   failed: "text-red-400",
 };
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KB", "MB", "GB"];
-  let value = bytes / 1024;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  return `${value.toFixed(1)} ${units[unitIndex]}`;
-}
 
 function ItemStatusLine({ item }: { item: QueueItem }) {
   if (item.status === "downloading") {
@@ -48,6 +39,17 @@ function ItemStatusLine({ item }: { item: QueueItem }) {
     return <p className="text-xs text-sky-400">Downloading… {formatBytes(item.receivedBytes)}</p>;
   }
 
+  if (item.status === "saving") {
+    return (
+      <div className="mt-1">
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-700">
+          <div className="h-full w-full animate-pulse rounded-full bg-amber-400" />
+        </div>
+        <p className="mt-1 text-xs text-amber-400">Saving to disk… (handled by your browser)</p>
+      </div>
+    );
+  }
+
   if (item.status === "failed") {
     return <p className="text-xs text-red-400">Failed{item.error ? `: ${item.error}` : ""}</p>;
   }
@@ -61,7 +63,9 @@ export function DownloadQueuePanel() {
 
   if (items.length === 0) return null;
 
-  const remainingCount = items.filter((item) => item.status === "waiting" || item.status === "downloading").length;
+  const remainingCount = items.filter(
+    (item) => item.status === "waiting" || item.status === "downloading" || item.status === "saving"
+  ).length;
   const completeCount = items.filter((item) => item.status === "complete").length;
   const failedCount = items.filter((item) => item.status === "failed").length;
   const hasCompleted = completeCount > 0;

@@ -13,13 +13,14 @@ export interface GetMoviesOptions {
 export async function getMovies(options: GetMoviesOptions): Promise<PagedResult<MovieDTO>> {
   const { libraryId, ids, startIndex = 0, limit = 100 } = options;
 
+  const fields = "ProductionYear,Container,Overview,MediaSources";
   const res = ids
-    ? await jellyfinClient.getItems({ Ids: ids.join(","), Fields: "ProductionYear,Container" })
+    ? await jellyfinClient.getItems({ Ids: ids.join(","), Fields: fields })
     : await jellyfinClient.getItems({
         ParentId: libraryId,
         IncludeItemTypes: "Movie",
         Recursive: "true",
-        Fields: "ProductionYear,Container",
+        Fields: fields,
         SortBy: "SortName",
         StartIndex: startIndex,
         Limit: limit,

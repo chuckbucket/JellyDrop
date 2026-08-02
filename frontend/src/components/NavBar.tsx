@@ -1,8 +1,7 @@
 import { NavLink } from "react-router-dom";
 
 const links: Array<{ to: string; label: string; end?: boolean }> = [
-  { to: "/", label: "Home", end: true },
-  { to: "/libraries", label: "Libraries" },
+  { to: "/", label: "Libraries", end: true },
   { to: "/search", label: "Search" },
 ];
 

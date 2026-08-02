@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import type { SeasonSummaryDTO } from "@shared/types";
 import { getSeasonManifest } from "../api/client";
 import { useDownloadQueue } from "../context/DownloadQueueContext";
+import { formatBytes } from "../utils/format";
 
 interface SeasonRowProps {
   seriesId: string;
@@ -29,6 +30,7 @@ export function SeasonRow({ seriesId, season }: SeasonRowProps) {
         <p className="font-medium text-neutral-100">{season.name}</p>
         <p className="text-sm text-neutral-400">
           {season.episodeCount} episode{season.episodeCount === 1 ? "" : "s"}
+          {season.sizeBytes !== null && ` · ${formatBytes(season.sizeBytes)}`}
         </p>
       </Link>
       <button

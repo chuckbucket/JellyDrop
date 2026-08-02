@@ -18,6 +18,9 @@ export interface MovieDTO {
   name: string;
   year: number | null;
   posterUrl: string;
+  overview: string | null;
+  resolution: string | null;
+  sizeBytes: number | null;
 }
 
 export interface SeriesDTO {
@@ -32,6 +35,7 @@ export interface SeasonSummaryDTO {
   name: string;
   indexNumber: number | null;
   episodeCount: number;
+  sizeBytes: number | null;
 }
 
 export interface ShowDetailDTO {
@@ -40,6 +44,7 @@ export interface ShowDetailDTO {
   year: number | null;
   overview: string | null;
   posterUrl: string;
+  totalSizeBytes: number | null;
   seasons: SeasonSummaryDTO[];
 }
 
@@ -48,6 +53,8 @@ export interface EpisodeDTO {
   name: string;
   indexNumber: number | null;
   seasonIndexNumber: number | null;
+  resolution: string | null;
+  sizeBytes: number | null;
 }
 
 export interface SeasonDetailDTO {

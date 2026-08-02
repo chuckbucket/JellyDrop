@@ -14,6 +14,23 @@ export function hasMediaFile(item: JellyfinItem): boolean {
   return Boolean(item.Container);
 }
 
+/** Bare byte count of the primary media file — never the object it came from, so no path can leak. */
+export function getFileSizeBytes(item: JellyfinItem): number | null {
+  return item.MediaSources?.[0]?.Size ?? null;
+}
+
+/** A friendly label ("1080p", "4K") derived from the video stream's height — not Jellyfin's raw stream data. */
+export function getResolutionLabel(item: JellyfinItem): string | null {
+  const height = item.MediaSources?.[0]?.MediaStreams?.find((stream) => stream.Type === "Video")?.Height;
+  if (!height) return null;
+  if (height >= 2160) return "4K";
+  if (height >= 1440) return "1440p";
+  if (height >= 1080) return "1080p";
+  if (height >= 720) return "720p";
+  if (height >= 480) return "480p";
+  return `${height}p`;
+}
+
 export function mapLibrary(folder: JellyfinVirtualFolder): LibraryDTO | null {
   if (folder.CollectionType !== "movies" && folder.CollectionType !== "tvshows") return null;
   return { id: folder.ItemId, name: folder.Name, type: folder.CollectionType, posterUrl: posterUrl(folder.ItemId) };
@@ -25,6 +42,9 @@ export function mapMovie(item: JellyfinItem): MovieDTO {
     name: item.Name,
     year: item.ProductionYear ?? null,
     posterUrl: posterUrl(item.Id),
+    overview: item.Overview ?? null,
+    resolution: getResolutionLabel(item),
+    sizeBytes: getFileSizeBytes(item),
   };
 }
 

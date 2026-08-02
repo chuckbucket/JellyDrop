@@ -1,7 +1,7 @@
 import type { EpisodeDTO, PagedResult, SeasonDetailDTO, SeasonSummaryDTO, SeriesDTO, ShowDetailDTO } from "@shared/types";
 import { jellyfinClient } from "../jellyfin/client";
 import type { JellyfinItem } from "../jellyfin/types";
-import { hasMediaFile, mapSeries } from "../utils/mappers";
+import { getFileSizeBytes, getResolutionLabel, hasMediaFile, mapSeries } from "../utils/mappers";
 
 export interface GetShowsOptions {
   libraryId?: string;
@@ -31,35 +31,54 @@ function byIndexNumber(a: JellyfinItem, b: JellyfinItem): number {
   return (a.IndexNumber ?? 0) - (b.IndexNumber ?? 0);
 }
 
+interface SeasonsSummary {
+  seasons: SeasonSummaryDTO[];
+  totalSizeBytes: number | null;
+}
+
 /**
- * Jellyfin's Seasons endpoint doesn't reliably populate ChildCount, so episode counts
- * are derived from a single all-episodes call grouped by season number instead.
+ * Jellyfin's Seasons endpoint doesn't reliably populate ChildCount, so episode counts (and total
+ * file sizes) are derived from a single all-episodes call grouped by season number instead.
  */
-async function getSeasonsWithEpisodeCounts(seriesId: string): Promise<SeasonSummaryDTO[]> {
+async function getSeasonsWithEpisodeCounts(seriesId: string): Promise<SeasonsSummary> {
   const [seasons, episodes] = await Promise.all([
     jellyfinClient.getSeasons(seriesId),
-    jellyfinClient.getEpisodes(seriesId, { fields: ["ParentIndexNumber", "Container"] }),
+    jellyfinClient.getEpisodes(seriesId, { fields: ["ParentIndexNumber", "Container", "MediaSources"] }),
   ]);
 
   const countBySeasonNumber = new Map<number, number>();
+  const sizeBySeasonNumber = new Map<number, number>();
+  let totalSizeBytes = 0;
+  let anySizeKnown = false;
+
   for (const episode of episodes) {
     if (episode.ParentIndexNumber === undefined || !hasMediaFile(episode)) continue;
     countBySeasonNumber.set(episode.ParentIndexNumber, (countBySeasonNumber.get(episode.ParentIndexNumber) ?? 0) + 1);
+
+    const size = getFileSizeBytes(episode);
+    if (size !== null) {
+      anySizeKnown = true;
+      totalSizeBytes += size;
+      sizeBySeasonNumber.set(episode.ParentIndexNumber, (sizeBySeasonNumber.get(episode.ParentIndexNumber) ?? 0) + size);
+    }
   }
 
-  return [...seasons]
+  const seasonSummaries = [...seasons]
     .sort(byIndexNumber)
     .map((season) => ({
       id: season.Id,
       name: season.Name,
       indexNumber: season.IndexNumber ?? null,
       episodeCount: season.IndexNumber !== undefined ? (countBySeasonNumber.get(season.IndexNumber) ?? 0) : 0,
+      sizeBytes: season.IndexNumber !== undefined ? (sizeBySeasonNumber.get(season.IndexNumber) ?? null) : null,
     }))
     .filter((season) => season.episodeCount > 0);
+
+  return { seasons: seasonSummaries, totalSizeBytes: anySizeKnown ? totalSizeBytes : null };
 }
 
 export async function getShowDetail(seriesId: string): Promise<ShowDetailDTO | null> {
-  const [items, seasons] = await Promise.all([
+  const [items, { seasons, totalSizeBytes }] = await Promise.all([
     jellyfinClient.getItemsByIds([seriesId], ["ProductionYear", "Overview"]),
     getSeasonsWithEpisodeCounts(seriesId),
   ]);
@@ -71,6 +90,7 @@ export async function getShowDetail(seriesId: string): Promise<ShowDetailDTO | n
     year: item.ProductionYear ?? null,
     overview: item.Overview ?? null,
     posterUrl: `/api/image/${item.Id}`,
+    totalSizeBytes,
     seasons,
   };
 }
@@ -81,6 +101,8 @@ function toEpisodeDTO(item: JellyfinItem): EpisodeDTO {
     name: item.Name,
     indexNumber: item.IndexNumber ?? null,
     seasonIndexNumber: item.ParentIndexNumber ?? null,
+    resolution: getResolutionLabel(item),
+    sizeBytes: getFileSizeBytes(item),
   };
 }
 
@@ -91,7 +113,7 @@ export async function getSeasonDetail(seasonId: string): Promise<SeasonDetailDTO
 
   const episodes = await jellyfinClient.getEpisodes(season.SeriesId, {
     seasonId,
-    fields: ["Container", "SeriesName", "ParentIndexNumber", "IndexNumber"],
+    fields: ["Container", "SeriesName", "ParentIndexNumber", "IndexNumber", "MediaSources"],
   });
 
   return {

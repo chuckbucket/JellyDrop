@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
-export type QueueItemStatus = "waiting" | "downloading" | "complete" | "failed";
+export type QueueItemStatus = "waiting" | "downloading" | "saving" | "complete" | "failed";
 
 export interface QueueItem {
   /** Unique per enqueue — the same media id can be queued more than once (e.g. retried across sessions). */
@@ -62,13 +62,20 @@ function parseContentDispositionFilename(header: string | null): string | null {
 
 interface DownloadCallbacks {
   onProgress: (receivedBytes: number, totalBytes: number | null) => void;
+  /** Fired once every byte has been received over the network, before the browser writes it to disk. */
+  onSaving: () => void;
 }
 
 /**
  * Reads the response as a stream so the queue can report real byte-level progress, and only
  * resolves once every byte has actually arrived — "complete" here means complete, not "handed off".
+ *
+ * This happens in two genuinely distinct phases, both real: first the file is received into memory
+ * (tracked byte-for-byte below), then the browser writes that data out to your actual downloads
+ * folder as a separate step it controls — that's what "saving" reflects, rather than leaving the UI
+ * looking finished while the browser is still visibly working on it.
  */
-async function triggerDownload(item: QueueItem, { onProgress }: DownloadCallbacks): Promise<void> {
+async function triggerDownload(item: QueueItem, { onProgress, onSaving }: DownloadCallbacks): Promise<void> {
   const res = await fetch(item.downloadUrl);
   if (!res.ok || !res.body) {
     await res.body?.cancel().catch(() => undefined);
@@ -95,6 +102,7 @@ async function triggerDownload(item: QueueItem, { onProgress }: DownloadCallback
     }
   }
   onProgress(receivedBytes, totalBytes);
+  onSaving();
 
   // fetch() bodies are always backed by a real ArrayBuffer at runtime; the stricter generic
   // ArrayBufferLike typing (which also admits SharedArrayBuffer) is what TS is objecting to here.
@@ -158,11 +166,14 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
     const onProgress = (receivedBytes: number, totalBytes: number | null) => {
       setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, receivedBytes, totalBytes } : item)));
     };
+    const onSaving = () => {
+      setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "saving" as const } : item)));
+    };
 
     void (async () => {
       await sleep(BETWEEN_DOWNLOADS_DELAY_MS);
       try {
-        await triggerDownload(next, { onProgress });
+        await triggerDownload(next, { onProgress, onSaving });
         setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "complete" as const } : item)));
       } catch (err) {
         const message = err instanceof Error ? err.message : "Download failed";

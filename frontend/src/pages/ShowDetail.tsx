@@ -6,6 +6,7 @@ import { ErrorState } from "../components/ErrorState";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { SeasonRow } from "../components/SeasonRow";
 import { useDownloadQueue } from "../context/DownloadQueueContext";
+import { formatBytes } from "../utils/format";
 
 export function ShowDetail() {
   const { id } = useParams<{ id: string }>();
@@ -37,6 +38,12 @@ export function ShowDetail() {
 
   const totalEpisodeCount = show.seasons.reduce((sum, season) => sum + season.episodeCount, 0);
 
+  const metaParts = [
+    show.year ? String(show.year) : null,
+    `${totalEpisodeCount} download${totalEpisodeCount === 1 ? "" : "s"}`,
+    show.totalSizeBytes !== null ? formatBytes(show.totalSizeBytes) : null,
+  ].filter((part): part is string => part !== null);
+
   return (
     <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
       <div className="mb-8 flex flex-col gap-6 sm:flex-row">
@@ -44,11 +51,7 @@ export function ShowDetail() {
         <div className="flex flex-col gap-4">
           <div>
             <h1 className="text-3xl font-bold">{show.name}</h1>
-            <p className="text-neutral-400">
-              {show.year}
-              {show.year && " · "}
-              {totalEpisodeCount} episode{totalEpisodeCount === 1 ? "" : "s"}
-            </p>
+            <p className="text-neutral-400">{metaParts.join(" · ")}</p>
             {show.overview && <p className="mt-3 max-w-2xl text-sm text-neutral-300">{show.overview}</p>}
           </div>
           <button
