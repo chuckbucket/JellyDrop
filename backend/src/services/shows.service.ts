@@ -27,6 +27,10 @@ const playableEpisodesCache = createTtlCache<string | undefined, Set<string>>(CA
  * no pagination needed), grouped by SeriesId — this avoids an N+1 "fetch seasons per series" fan-out
  * when listing a whole library. Season 0 ("Specials") is excluded so the count/year-range reflects
  * only regular numbered seasons, matching how these are normally presented.
+ *
+ * Counts unique season *numbers*, not raw Season records — a library rescan/reorganization can
+ * leave a series with more than one Season record sharing the same number (one real, one an empty
+ * leftover), which would otherwise inflate "N seasons" on the show card.
  */
 function getSeasonStatsByLibrary(libraryId: string | undefined): Promise<Map<string, SeasonStats>> {
   return seasonStatsCache(libraryId, async () => {
@@ -37,11 +41,16 @@ function getSeasonStatsByLibrary(libraryId: string | undefined): Promise<Map<str
       Fields: "ProductionYear",
     });
 
+    const numbersBySeriesId = new Map<string, Set<number>>();
     const statsBySeriesId = new Map<string, SeasonStats>();
     for (const season of res.Items) {
       if (!season.SeriesId || !season.IndexNumber) continue;
+      const numbers = numbersBySeriesId.get(season.SeriesId) ?? new Set<number>();
+      numbers.add(season.IndexNumber);
+      numbersBySeriesId.set(season.SeriesId, numbers);
+
       const stats = statsBySeriesId.get(season.SeriesId) ?? { count: 0, firstYear: null, lastYear: null };
-      stats.count += 1;
+      stats.count = numbers.size;
       if (season.ProductionYear) {
         stats.firstYear = stats.firstYear === null ? season.ProductionYear : Math.min(stats.firstYear, season.ProductionYear);
         stats.lastYear = stats.lastYear === null ? season.ProductionYear : Math.max(stats.lastYear, season.ProductionYear);
@@ -119,36 +128,42 @@ interface SeasonsSummary {
 
 /**
  * Jellyfin's Seasons endpoint doesn't reliably populate ChildCount, so episode counts (and total
- * file sizes) are derived from a single all-episodes call grouped by season number instead.
+ * file sizes) are derived from a single all-episodes call instead — grouped by each episode's
+ * *actual* `SeasonId`, not its season number. A library rescan/reorganization can leave a series
+ * with more than one Season record sharing the same IndexNumber (one real, one an empty leftover);
+ * grouping by number would attribute every episode to *both* records, double-counting the total
+ * and listing the same season twice. Grouping by SeasonId instead means the real record gets the
+ * correct count and the empty duplicate gets zero, so the existing `episodeCount > 0` filter below
+ * already drops it without any extra dedupe step.
  */
 async function getSeasonsWithEpisodeCounts(seriesId: string, userId?: string): Promise<SeasonsSummary> {
   const fields = userId
-    ? ["ParentIndexNumber", "Container", "MediaSources", "UserData"]
-    : ["ParentIndexNumber", "Container", "MediaSources"];
+    ? ["ParentIndexNumber", "SeasonId", "Container", "MediaSources", "UserData"]
+    : ["ParentIndexNumber", "SeasonId", "Container", "MediaSources"];
   const [seasons, episodes] = await Promise.all([
     jellyfinClient.getSeasons(seriesId, ["Overview"]),
     jellyfinClient.getEpisodes(seriesId, { fields, userId }),
   ]);
 
-  const countBySeasonNumber = new Map<number, number>();
-  const sizeBySeasonNumber = new Map<number, number>();
-  const watchedCountBySeasonNumber = new Map<number, number>();
+  const countBySeasonId = new Map<string, number>();
+  const sizeBySeasonId = new Map<string, number>();
+  const watchedCountBySeasonId = new Map<string, number>();
   let totalSizeBytes = 0;
   let anySizeKnown = false;
 
   for (const episode of episodes) {
-    if (episode.ParentIndexNumber === undefined || !hasMediaFile(episode)) continue;
-    countBySeasonNumber.set(episode.ParentIndexNumber, (countBySeasonNumber.get(episode.ParentIndexNumber) ?? 0) + 1);
+    if (!episode.SeasonId || !hasMediaFile(episode)) continue;
+    countBySeasonId.set(episode.SeasonId, (countBySeasonId.get(episode.SeasonId) ?? 0) + 1);
 
     const size = getFileSizeBytes(episode);
     if (size !== null) {
       anySizeKnown = true;
       totalSizeBytes += size;
-      sizeBySeasonNumber.set(episode.ParentIndexNumber, (sizeBySeasonNumber.get(episode.ParentIndexNumber) ?? 0) + size);
+      sizeBySeasonId.set(episode.SeasonId, (sizeBySeasonId.get(episode.SeasonId) ?? 0) + size);
     }
 
     if (userId && episode.UserData?.Played) {
-      watchedCountBySeasonNumber.set(episode.ParentIndexNumber, (watchedCountBySeasonNumber.get(episode.ParentIndexNumber) ?? 0) + 1);
+      watchedCountBySeasonId.set(episode.SeasonId, (watchedCountBySeasonId.get(episode.SeasonId) ?? 0) + 1);
     }
   }
 
@@ -158,11 +173,11 @@ async function getSeasonsWithEpisodeCounts(seriesId: string, userId?: string): P
       id: season.Id,
       name: season.Name,
       indexNumber: season.IndexNumber ?? null,
-      episodeCount: season.IndexNumber !== undefined ? (countBySeasonNumber.get(season.IndexNumber) ?? 0) : 0,
-      sizeBytes: season.IndexNumber !== undefined ? (sizeBySeasonNumber.get(season.IndexNumber) ?? null) : null,
+      episodeCount: countBySeasonId.get(season.Id) ?? 0,
+      sizeBytes: sizeBySeasonId.get(season.Id) ?? null,
       overview: season.Overview ?? null,
       posterUrl: `/api/image/${season.Id}`,
-      watchedCount: userId && season.IndexNumber !== undefined ? (watchedCountBySeasonNumber.get(season.IndexNumber) ?? 0) : null,
+      watchedCount: userId ? (watchedCountBySeasonId.get(season.Id) ?? 0) : null,
     }))
     .filter((season) => season.episodeCount > 0);
 
@@ -223,7 +238,7 @@ export async function getSeasonDetail(seasonId: string, userId?: string): Promis
 }
 
 /** Filename-building fields plus MediaSources/RunTimeTicks (resolution + duration, for transcode skip-logic). */
-const DOWNLOAD_EPISODE_FIELDS = ["Container", "SeriesName", "ParentIndexNumber", "IndexNumber", "MediaSources", "RunTimeTicks"];
+const DOWNLOAD_EPISODE_FIELDS = ["Container", "SeriesName", "ParentIndexNumber", "SeasonId", "IndexNumber", "MediaSources", "RunTimeTicks"];
 
 /** Ordered episodes (with filename-building fields) for one season — the basis for the season download manifest. */
 export async function getSeasonEpisodesForDownload(seasonId: string, userId?: string): Promise<JellyfinItem[] | null> {

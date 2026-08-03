@@ -41,6 +41,10 @@ export interface JellyfinItem {
   SeriesId?: string;
   IndexNumber?: number;
   ParentIndexNumber?: number;
+  /** An episode's actual parent season id — Jellyfin can have more than one Season record sharing
+   *  the same IndexNumber (e.g. after a library reorganization/rescan), so this is the only
+   *  reliable way to tell which specific season record an episode really belongs to. */
+  SeasonId?: string;
   Overview?: string;
   MediaSources?: JellyfinMediaSource[];
   /** Only populated when the request included a UserId — watched/resume state is per-user. */

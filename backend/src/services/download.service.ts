@@ -354,19 +354,22 @@ export async function streamShowZip(
   seriesId: string,
   options: { userId?: string; unwatchedOnly?: boolean; quality?: TranscodeQuality } = {}
 ): Promise<boolean> {
-  const [seriesItems, allEpisodes, seasons] = await Promise.all([
+  const [seriesItems, allEpisodes] = await Promise.all([
     jellyfinClient.getItemsByIds([seriesId], []),
     showsService.getAllEpisodesForDownload(seriesId, options.userId),
-    jellyfinClient.getSeasons(seriesId, ["IndexNumber"]),
   ]);
   const series = seriesItems[0];
   if (!series) return false;
   const episodes = filterUnwatched(allEpisodes, Boolean(options.userId) && Boolean(options.unwatchedOnly));
   const quality = effectiveQuality(options.quality);
 
+  // Derived from the episodes' own SeasonId, not a separate Seasons-endpoint call — a library
+  // rescan/reorganization can leave more than one Season record sharing the same number (one real,
+  // one an empty leftover), and picking arbitrarily between them here could grab the empty one's
+  // (missing) poster instead of the real season's.
   const seasonIdByNumber = new Map<number, string>();
-  for (const season of seasons) {
-    if (season.IndexNumber !== undefined) seasonIdByNumber.set(season.IndexNumber, season.Id);
+  for (const ep of episodes) {
+    if (ep.ParentIndexNumber !== undefined && ep.SeasonId) seasonIdByNumber.set(ep.ParentIndexNumber, ep.SeasonId);
   }
   const seasonNumbersInZip = [...new Set(episodes.map((episode) => episode.ParentIndexNumber ?? 0))];
   const folderImages = [

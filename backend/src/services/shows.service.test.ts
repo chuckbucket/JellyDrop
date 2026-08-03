@@ -11,7 +11,7 @@ vi.mock("../jellyfin/client", () => ({
 }));
 
 import { jellyfinClient } from "../jellyfin/client";
-import { getShows } from "./shows.service";
+import { getShowDetail, getShows } from "./shows.service";
 
 function seriesItem(id: string, opts: { year?: number } = {}): JellyfinItem {
   return { Id: id, Name: `Series ${id}`, Type: "Series", ProductionYear: opts.year };
@@ -101,5 +101,41 @@ describe("getShows", () => {
     // Only the Series listing itself is refetched each call (it's not cached, since paged reads
     // must stay live) — the Season and Episode bulk scans should be served from cache the second time.
     expect(callsAfterSecond - callsAfterFirst).toBe(1);
+  });
+
+  it("counts unique season numbers toward seasonCount, not raw Season records (regression: a library rescan can leave two Season records sharing the same number, which used to double the displayed count)", async () => {
+    mockLibrary({
+      episodes: [episodeItem("e1", "series-a")],
+      series: [seriesItem("series-a")],
+      seasons: [
+        { Id: "s1-real", Name: "Season 1", Type: "Season", SeriesId: "series-a", IndexNumber: 1 },
+        { Id: "s1-ghost", Name: "Season 1", Type: "Season", SeriesId: "series-a", IndexNumber: 1 },
+        { Id: "s2-real", Name: "Season 2", Type: "Season", SeriesId: "series-a", IndexNumber: 2 },
+      ],
+    });
+
+    const result = await getShows({ libraryId: "lib-dup-season", limit: 10 });
+
+    expect(result.items[0].seasonCount).toBe(2);
+  });
+});
+
+describe("getShowDetail", () => {
+  it("collapses a duplicate Season record (same number, no real episodes) instead of double-counting/listing it (regression: Jellyfin can have two Season records sharing an IndexNumber after a library rescan, and grouping by number instead of the episodes' real SeasonId attributed every episode to both)", async () => {
+    vi.mocked(jellyfinClient.getItemsByIds).mockResolvedValueOnce([{ Id: "series-1", Name: "Test Show", Type: "Series" }]);
+    vi.mocked(jellyfinClient.getSeasons).mockResolvedValueOnce([
+      { Id: "season-1-real", Name: "Season 1", Type: "Season", IndexNumber: 1 },
+      { Id: "season-1-ghost", Name: "Season 1", Type: "Season", IndexNumber: 1 },
+    ]);
+    vi.mocked(jellyfinClient.getEpisodes).mockResolvedValueOnce([
+      { Id: "e1", Name: "e1", Type: "Episode", Container: "mkv", ParentIndexNumber: 1, SeasonId: "season-1-real" },
+      { Id: "e2", Name: "e2", Type: "Episode", Container: "mkv", ParentIndexNumber: 1, SeasonId: "season-1-real" },
+    ]);
+
+    const result = await getShowDetail("series-1");
+
+    expect(result?.seasons).toHaveLength(1);
+    expect(result?.seasons[0].id).toBe("season-1-real");
+    expect(result?.seasons[0].episodeCount).toBe(2);
   });
 });

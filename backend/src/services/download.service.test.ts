@@ -53,7 +53,6 @@ function freshStream(): ReadableStream {
 vi.mock("../jellyfin/client", () => ({
   jellyfinClient: {
     getItemsByIds: vi.fn(),
-    getSeasons: vi.fn().mockResolvedValue([]),
     streamProxy: vi.fn().mockImplementation(async () => ({ ok: true, body: freshStream() })),
     streamTranscodedProxy: vi.fn().mockImplementation(async () => ({ ok: true, body: freshStream() })),
   },
@@ -77,7 +76,8 @@ function episode(
   id: string,
   played?: boolean,
   seasonNumber?: number,
-  resolution?: { height: number; sizeBytes: number; runTimeTicks: number }
+  resolution?: { height: number; sizeBytes: number; runTimeTicks: number },
+  seasonId?: string
 ): JellyfinItem {
   return {
     Id: id,
@@ -85,6 +85,7 @@ function episode(
     Type: "Episode",
     Container: "mkv",
     ParentIndexNumber: seasonNumber,
+    SeasonId: seasonId,
     SeriesName: "Test Show",
     UserData: played === undefined ? undefined : { Played: played },
     MediaSources: resolution ? [{ Size: resolution.sizeBytes, MediaStreams: [{ Type: "Video", Height: resolution.height }] }] : undefined,
@@ -137,13 +138,9 @@ describe("streamShowZip", () => {
   it("groups episodes into per-season subfolders inside the archive", async () => {
     vi.mocked(jellyfinClient.getItemsByIds).mockResolvedValueOnce([{ Id: "series-1", Name: "Test Show", Type: "Series" }]);
     vi.mocked(showsService.getAllEpisodesForDownload).mockResolvedValueOnce([
-      episode("e1", undefined, 1),
-      episode("e2", undefined, 1),
-      episode("e3", undefined, 2),
-    ]);
-    vi.mocked(jellyfinClient.getSeasons).mockResolvedValueOnce([
-      { Id: "season-1", Name: "Season 1", Type: "Season", IndexNumber: 1 },
-      { Id: "season-2", Name: "Season 2", Type: "Season", IndexNumber: 2 },
+      episode("e1", undefined, 1, undefined, "season-1"),
+      episode("e2", undefined, 1, undefined, "season-1"),
+      episode("e3", undefined, 2, undefined, "season-2"),
     ]);
 
     await streamShowZip(fakeResponse(), "series-1");
@@ -161,8 +158,7 @@ describe("streamShowZip", () => {
 
   it("skips a folder.jpg entry when Jellyfin has no poster for that item", async () => {
     vi.mocked(jellyfinClient.getItemsByIds).mockResolvedValueOnce([{ Id: "series-1", Name: "Test Show", Type: "Series" }]);
-    vi.mocked(showsService.getAllEpisodesForDownload).mockResolvedValueOnce([episode("e1", undefined, 1)]);
-    vi.mocked(jellyfinClient.getSeasons).mockResolvedValueOnce([{ Id: "season-1", Name: "Season 1", Type: "Season", IndexNumber: 1 }]);
+    vi.mocked(showsService.getAllEpisodesForDownload).mockResolvedValueOnce([episode("e1", undefined, 1, undefined, "season-1")]);
     // Order matches the code: folder images (series, then season) are appended before episodes.
     vi.mocked(jellyfinClient.streamProxy)
       .mockImplementationOnce(async () => ({ ok: false, status: 404, body: null }) as unknown as Response) // series folder.jpg
