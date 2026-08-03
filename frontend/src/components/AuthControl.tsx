@@ -43,7 +43,7 @@ export function AuthControl() {
         Log in
       </button>
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-64 rounded-lg border border-neutral-800 bg-[var(--color-jelly-surface)] p-4 shadow-xl">
+        <div className="absolute right-0 z-50 mt-2 w-72 rounded-lg border border-neutral-800 bg-[var(--color-jelly-surface)] p-4 shadow-xl">
           <LoginForm onSuccess={() => setOpen(false)} />
         </div>
       )}

@@ -17,8 +17,10 @@ export function PosterCard({ to, posterUrl, title, subtitle, action, badge }: Po
       <div className="relative aspect-2/3 overflow-hidden rounded-lg bg-neutral-800 shadow-md transition-transform duration-200 group-hover:scale-[1.03] group-hover:shadow-xl">
         <img src={posterUrl} alt={title} loading="lazy" className="h-full w-full object-cover" />
         {badge && <div className="absolute top-2 left-2">{badge}</div>}
+        {/* Always visible, not hover-gated — hover has no equivalent on touchscreens, where the
+            button would otherwise never appear. */}
         {action && (
-          <div className="absolute inset-x-0 bottom-0 flex justify-end bg-gradient-to-t from-black/85 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100">
+          <div className="absolute inset-x-0 bottom-0 flex justify-end bg-gradient-to-t from-black/85 to-transparent p-2">
             {action}
           </div>
         )}

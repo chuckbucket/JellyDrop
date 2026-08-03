@@ -4,6 +4,7 @@ import type {
   LibraryDTO,
   MovieDTO,
   PagedResult,
+  PublicUserDTO,
   RecentlyWatchedDTO,
   SearchResultDTO,
   SeasonDetailDTO,
@@ -125,4 +126,10 @@ export function logout(): Promise<void> {
 
 export function getRecentlyWatched(): Promise<RecentlyWatchedDTO> {
   return getJson("/api/me/recently-watched");
+}
+
+/** The pre-login user picker — empty if the Jellyfin admin disabled it or the call fails, in which
+ *  case the login form falls back to a typed username/password. */
+export function getPublicUsers(): Promise<PublicUserDTO[]> {
+  return getJson("/api/auth/users");
 }

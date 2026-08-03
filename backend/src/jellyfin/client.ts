@@ -1,5 +1,5 @@
 import { config } from "../config";
-import type { JellyfinItem, JellyfinItemsResponse, JellyfinVirtualFolder } from "./types";
+import type { JellyfinItem, JellyfinItemsResponse, JellyfinPublicUser, JellyfinVirtualFolder } from "./types";
 
 export class JellyfinApiError extends Error {
   constructor(
@@ -43,6 +43,16 @@ class JellyfinClient {
 
   async getVirtualFolders(): Promise<JellyfinVirtualFolder[]> {
     return this.getJson<JellyfinVirtualFolder[]>("/Library/VirtualFolders");
+  }
+
+  /**
+   * The same "who's logging in" list Jellyfin's own login screen shows before any credentials are
+   * entered — lets the login form offer a picker instead of requiring the username to be typed.
+   * Jellyfin excludes hidden users from this list on its own; an admin can also disable it
+   * server-wide, in which case it just comes back empty and the frontend falls back to a typed form.
+   */
+  async getPublicUsers(): Promise<JellyfinPublicUser[]> {
+    return this.getJson<JellyfinPublicUser[]>("/Users/Public");
   }
 
   async getItems(params: QueryParams): Promise<JellyfinItemsResponse> {

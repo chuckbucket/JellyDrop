@@ -46,11 +46,19 @@ cp .env.example .env
 
 By default (`AUTH_MODE=open`) JellyDrop works exactly as before: no login required, everyone who can
 reach it can browse and download everything the configured `JELLYFIN_API_KEY` can see. A "Log in"
-control in the nav bar lets anyone log in with a **real Jellyfin username/password** to unlock:
+control in the nav bar lets anyone log in with a **real Jellyfin account** to unlock:
 
 - Watched marks on episodes and movies
-- A "Recently Watched" row on the Libraries page
+- A "Recently Watched" row of series on the Libraries page (movies are left out on purpose — one you
+  just finished isn't something you'd want to download again)
 - An "Unwatched only" checkbox on season/series downloads
+
+The login form leads with a picker of Jellyfin's public accounts (the same list its own login screen
+uses), so nobody has to type a username — clicking an account with no password set logs in
+immediately, since Jellyfin allows passwordless accounts (common for kid/local-network profiles). If
+that list is empty or disabled server-side, or the account isn't in it, a manual username/password
+form is always available as a fallback (password can be left blank for passwordless accounts there
+too).
 
 Login is a real credential check against your Jellyfin server, but it's an access gate and
 personalization layer only — every logged-in user still sees and can download everything the shared
@@ -161,10 +169,12 @@ order, one at a time.
 | `GET /api/download/season/:id`  | Ordered download manifest for a season (`?unwatchedOnly=true` when logged in)                   |
 | `GET /api/download/show/:id`    | Ordered download manifest for an entire series (`?unwatchedOnly=true` when logged in)           |
 | `GET /api/image/:id`            | Poster image proxy (keeps the Jellyfin API key server-side)                                     |
-| `POST /api/auth/login`          | Log in with a Jellyfin username/password, starts a session                                      |
+| `POST /api/auth/login`          | Log in with a Jellyfin username/password (password may be empty for passwordless accounts)      |
 | `POST /api/auth/logout`         | Ends the current session                                                                        |
 | `GET /api/auth/me`              | Current auth mode and logged-in user, if any                                                    |
-| `GET /api/me/recently-watched`  | Recently watched movies/series for the logged-in user (requires login)                          |
+| `GET /api/auth/users`           | Public "who's logging in" picker list (empty if disabled server-side)                           |
+| `GET /api/auth/users/:id/avatar`| Proxies a picker user's avatar image                                                             |
+| `GET /api/me/recently-watched`  | Recently watched series for the logged-in user (requires login)                                 |
 
 ## Not in this MVP (by design)
 

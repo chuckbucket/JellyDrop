@@ -115,11 +115,17 @@ export interface AuthStatusDTO {
   user: UserDTO | null;
 }
 
-export type RecentlyWatchedType = "movie" | "series";
+/** One entry in the pre-login "who's logging in" picker — mirrors what Jellyfin's own login screen shows. */
+export interface PublicUserDTO {
+  id: string;
+  name: string;
+  hasPassword: boolean;
+  posterUrl: string | null;
+}
 
+/** Always a series — a movie you just finished isn't something you'd want to download again. */
 export interface RecentlyWatchedItemDTO {
   id: string;
-  type: RecentlyWatchedType;
   name: string;
   posterUrl: string;
   year: number | null;

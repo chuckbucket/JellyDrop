@@ -52,3 +52,11 @@ export interface JellyfinItemsResponse {
   TotalRecordCount: number;
   StartIndex: number;
 }
+
+/** The subset of /Users/Public Jellyfin returns for the pre-login "who's logging in" picker. */
+export interface JellyfinPublicUser {
+  Id: string;
+  Name: string;
+  HasPassword: boolean;
+  PrimaryImageTag?: string;
+}

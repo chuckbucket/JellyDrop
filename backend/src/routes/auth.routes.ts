@@ -1,11 +1,12 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
-import type { AuthStatusDTO } from "@shared/types";
+import type { AuthStatusDTO, PublicUserDTO } from "@shared/types";
 import { clearSessionCookie, readSessionId, setSessionCookie } from "../auth/cookies";
 import { createSession, destroySession } from "../auth/session";
 import { config } from "../config";
 import { jellyfinClient } from "../jellyfin/client";
 import { asyncHandler } from "../middleware/asyncHandler";
+import { pipeJellyfinResponse } from "../utils/stream";
 
 export const authRouter = Router();
 
@@ -19,8 +20,11 @@ authRouter.post(
   loginLimiter,
   asyncHandler(async (req, res) => {
     const { username, password } = req.body as { username?: unknown; password?: unknown };
-    if (typeof username !== "string" || typeof password !== "string" || !username.trim() || !password) {
-      res.status(400).json({ error: "Username and password are required" });
+    // Password may be an empty string on purpose — Jellyfin allows accounts with no password set
+    // (common for kid/local-network profiles), and AuthenticateByName is the source of truth on
+    // whether that's actually valid for this account, not us.
+    if (typeof username !== "string" || typeof password !== "string" || !username.trim()) {
+      res.status(400).json({ error: "Username is required" });
       return;
     }
 
@@ -50,3 +54,25 @@ authRouter.get("/me", (req, res) => {
   };
   res.json(body);
 });
+
+authRouter.get(
+  "/users",
+  asyncHandler(async (_req, res) => {
+    const users = await jellyfinClient.getPublicUsers();
+    const body: PublicUserDTO[] = users.map((user) => ({
+      id: user.Id,
+      name: user.Name,
+      hasPassword: user.HasPassword,
+      posterUrl: user.PrimaryImageTag ? `/api/auth/users/${user.Id}/avatar` : null,
+    }));
+    res.json(body);
+  })
+);
+
+authRouter.get(
+  "/users/:id/avatar",
+  asyncHandler(async (req, res) => {
+    const jfRes = await jellyfinClient.streamProxy(`/Users/${req.params.id}/Images/Primary`);
+    pipeJellyfinResponse(res, jfRes, { cacheControl: "public, max-age=86400" });
+  })
+);

@@ -19,9 +19,9 @@ export function RecentlyWatchedRow() {
       <h2 className="mb-3 text-xl font-semibold">Recently Watched</h2>
       <div className="flex gap-4 overflow-x-auto pb-2">
         {items.map((item) => (
-          <div key={`${item.type}-${item.id}`} className="w-32 shrink-0 sm:w-36">
+          <div key={item.id} className="w-32 shrink-0 sm:w-36">
             <PosterCard
-              to={item.type === "movie" ? `/movies/${item.id}` : `/shows/${item.id}`}
+              to={`/shows/${item.id}`}
               posterUrl={item.posterUrl}
               title={item.name}
               subtitle={item.year ? String(item.year) : undefined}

@@ -14,6 +14,7 @@ vi.mock("../jellyfin/client", () => ({
   jellyfinClient: {
     authenticateByName: vi.fn(),
     getVirtualFolders: vi.fn().mockResolvedValue([]),
+    getPublicUsers: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -48,9 +49,34 @@ describe("auth flow (AUTH_MODE=open)", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects a login request missing a password", async () => {
+  it("rejects a login request missing a password field entirely", async () => {
     const res = await request(app).post("/api/auth/login").send({ username: "alice" });
     expect(res.status).toBe(400);
+  });
+
+  it("accepts an empty password, for accounts Jellyfin allows to have none", async () => {
+    const { jellyfinClient } = await import("../jellyfin/client");
+    const authenticateByName = vi.mocked(jellyfinClient.authenticateByName);
+    authenticateByName.mockResolvedValueOnce({ id: "user-2", name: "kid" });
+
+    const res = await request(app).post("/api/auth/login").send({ username: "kid", password: "" });
+    expect(res.status).toBe(200);
+    expect(authenticateByName).toHaveBeenCalledWith("kid", "");
+  });
+
+  it("lists public users for the login picker, mapping avatar presence to a posterUrl", async () => {
+    const { jellyfinClient } = await import("../jellyfin/client");
+    vi.mocked(jellyfinClient.getPublicUsers).mockResolvedValueOnce([
+      { Id: "user-1", Name: "alice", HasPassword: true, PrimaryImageTag: "abc" },
+      { Id: "user-2", Name: "kid", HasPassword: false },
+    ]);
+
+    const res = await request(app).get("/api/auth/users");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([
+      { id: "user-1", name: "alice", hasPassword: true, posterUrl: "/api/auth/users/user-1/avatar" },
+      { id: "user-2", name: "kid", hasPassword: false, posterUrl: null },
+    ]);
   });
 
   it("logs in, reflects the session in /me, then logs out", async () => {

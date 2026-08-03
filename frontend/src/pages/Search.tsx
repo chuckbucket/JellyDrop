@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { SearchResultDTO } from "@shared/types";
-import { search } from "../api/client";
+import { movieDownloadUrl, search } from "../api/client";
+import { DownloadButton } from "../components/DownloadButton";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { PosterCard } from "../components/PosterCard";
 import { PosterGrid } from "../components/PosterGrid";
@@ -57,6 +58,7 @@ export function Search() {
                 posterUrl={result.posterUrl}
                 title={result.name}
                 subtitle={result.year ? String(result.year) : undefined}
+                action={<DownloadButton id={result.id} name={result.name} downloadUrl={movieDownloadUrl(result.id)} />}
               />
             ))}
           </PosterGrid>
