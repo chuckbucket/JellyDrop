@@ -169,7 +169,9 @@ Season and series downloads offer two forms: `GET /api/download/season/:id` / `.
 an ordered JSON manifest of episodes, which the frontend's download queue walks one at a time; the
 `/zip` variants of those same routes instead stream a single ZIP built on the fly server-side
 (`archiver`, `store`-only — media files are already compressed, so nothing is re-compressed) and are
-enqueued as one item, same as everything else.
+enqueued as one item, same as everything else. A full-series ZIP groups episodes into `Season 01/`,
+`Season 02/`, etc. subfolders inside the archive; a season ZIP only has one season in it, so its
+entries stay flat.
 
 Listings and search filter out any movie/series with no playable media left (Jellyfin can retain a
 library folder's entry — and any Season records under it — after every actual video file has been

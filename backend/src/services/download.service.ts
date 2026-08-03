@@ -44,6 +44,12 @@ function episodeFilename(episode: JellyfinItem): string {
   );
 }
 
+/** Matches the "Season 01" labeling already used for season-zip filenames, so a full-series zip's
+ *  folder names read the same as everything else. */
+function seasonFolderName(episode: JellyfinItem): string {
+  return `Season ${String(episode.ParentIndexNumber ?? 0).padStart(2, "0")}`;
+}
+
 function toManifestItem(episode: JellyfinItem): DownloadManifestItem {
   return {
     id: episode.Id,
@@ -85,8 +91,18 @@ export async function getShowManifest(
  * just copies the bytes through). This collapses what would otherwise be one browser download
  * dialog per episode into a single native download, at the cost of not being able to show
  * per-episode queue progress the way the JS download queue does.
+ *
+ * `buildEntryName` controls each file's path *inside* the archive — a season zip just uses the
+ * flat filename (there's only one season in it), but a full-series zip groups episodes into
+ * "Season 01/", "Season 02/", etc. subfolders so it doesn't dump every episode of every season
+ * into one flat folder.
  */
-async function streamEpisodesAsZip(res: ExpressResponse, episodes: JellyfinItem[], zipFilename: string): Promise<void> {
+async function streamEpisodesAsZip(
+  res: ExpressResponse,
+  episodes: JellyfinItem[],
+  zipFilename: string,
+  buildEntryName: (episode: JellyfinItem) => string = episodeFilename
+): Promise<void> {
   res.status(200);
   res.setHeader("Content-Type", "application/zip");
   res.setHeader("Content-Disposition", `attachment; filename="${zipFilename.replace(/"/g, "")}"`);
@@ -115,7 +131,7 @@ async function streamEpisodesAsZip(res: ExpressResponse, episodes: JellyfinItem[
       continue;
     }
     const nodeStream = Readable.fromWeb(jfRes.body as unknown as WebReadableStream);
-    archive.append(nodeStream, { name: episodeFilename(episode), store: true });
+    archive.append(nodeStream, { name: buildEntryName(episode), store: true });
   }
 
   await archive.finalize();
@@ -154,6 +170,6 @@ export async function streamShowZip(
   const episodes = filterUnwatched(allEpisodes, Boolean(options.userId) && Boolean(options.unwatchedOnly));
 
   console.log(`Downloading zip: ${series.Name} (${episodes.length} episodes)`);
-  await streamEpisodesAsZip(res, episodes, buildZipFilename(series.Name));
+  await streamEpisodesAsZip(res, episodes, buildZipFilename(series.Name), (episode) => `${seasonFolderName(episode)}/${episodeFilename(episode)}`);
   return true;
 }
