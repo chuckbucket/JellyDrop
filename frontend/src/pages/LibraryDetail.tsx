@@ -12,7 +12,9 @@ import { SeriesSubtitle } from "../components/SeriesSubtitle";
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
 import { useLetterFilter } from "../hooks/useLetterFilter";
 
-const PAGE_SIZE = 100;
+// Smaller first page = faster initial paint (fewer items to fetch/render, fewer poster images
+// requested up front) — infinite scroll makes loading more feel seamless anyway.
+const PAGE_SIZE = 60;
 
 export function LibraryDetail() {
   const { id } = useParams<{ id: string }>();

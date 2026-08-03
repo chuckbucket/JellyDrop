@@ -21,7 +21,7 @@ describe("usePaginatedItems", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.items).toEqual([{ id: "a", name: "A" }]);
     expect(result.current.hasMore).toBe(true);
-    expect(fetchPage).toHaveBeenCalledWith(0, 100);
+    expect(fetchPage).toHaveBeenCalledWith(0, 60);
   });
 
   it("uses the backend's returned cursor for the next request, not items.length (regression: some raw results can be filtered out server-side)", async () => {
@@ -43,7 +43,7 @@ describe("usePaginatedItems", () => {
       await result.current.loadMore();
     });
 
-    expect(fetchPage).toHaveBeenCalledWith(2, 100);
+    expect(fetchPage).toHaveBeenCalledWith(2, 60);
     expect(result.current.items).toEqual([
       { id: "a", name: "A" },
       { id: "b", name: "B" },

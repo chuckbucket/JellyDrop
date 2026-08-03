@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { PagedResult } from "@shared/types";
 
-const PAGE_SIZE = 100;
+// Smaller than Jellyfin's/this app's typical page used to be (100) — trims initial paint time
+// (fewer items to fetch/map/render, fewer poster images requested up front) since infinite scroll
+// already makes loading more feel seamless.
+const PAGE_SIZE = 60;
 
 /** Shared "fetch a page, then keep loading" state machine for the plain aggregate browse pages
  *  (Movies, TV Series, library detail). */

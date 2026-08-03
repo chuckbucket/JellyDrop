@@ -15,8 +15,10 @@ export interface GetShowsOptions {
 // tens of seconds on a library with tens of thousands of episodes — that recomputing it on every
 // single page request (infinite scroll fires one every time the user scrolls near the bottom)
 // would make browsing painful. This data only changes when the Jellyfin library itself does, so a
-// short cache window turns "every page pays the full scan" into "the first page in a while does".
-const CACHE_TTL_MS = 60_000;
+// long cache window turns "every page pays the full scan" into "roughly once every few minutes
+// pays it" — worth the staleness trade-off (new episodes take up to this long to affect
+// ghost-filtering/season counts) for a homelab library that doesn't change minute-to-minute.
+const CACHE_TTL_MS = 5 * 60_000;
 const seasonStatsCache = createTtlCache<string | undefined, Map<string, SeasonStats>>(CACHE_TTL_MS);
 const playableEpisodesCache = createTtlCache<string | undefined, Set<string>>(CACHE_TTL_MS);
 
