@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { TranscodeQuality } from "@shared/types";
 import { movieDownloadUrl, queueId } from "../api/client";
 import { useDownloadQueue } from "../context/DownloadQueueContext";
@@ -20,9 +21,15 @@ interface MoviePosterCardProps {
   jumpId?: string;
 }
 
-function cornerLabel(resolution?: string | null, sizeBytes?: number | null): string | null {
-  const parts = [resolution ?? null, sizeBytes != null ? formatBytes(sizeBytes) : null].filter((part): part is string => part !== null);
-  return parts.length > 0 ? parts.join(" · ") : null;
+/** Resolution and file size on their own line each, rather than one joined string, so both stay readable at poster size. */
+function cornerLabel(resolution?: string | null, sizeBytes?: number | null): ReactNode {
+  if (!resolution && sizeBytes == null) return null;
+  return (
+    <>
+      {resolution && <div className="truncate">{resolution}</div>}
+      {sizeBytes != null && <div className="truncate">{formatBytes(sizeBytes)}</div>}
+    </>
+  );
 }
 
 /** A movie poster with a split download button (quality dropdown attached) and a resolution/size corner label. */

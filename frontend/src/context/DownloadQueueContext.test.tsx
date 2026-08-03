@@ -4,8 +4,13 @@ import { DownloadQueueProvider, useDownloadQueue } from "./DownloadQueueContext"
 
 const LONG_TIMEOUT = { timeout: 5000 };
 
+// Forces "blob" mode: the only method that actually goes through fetch(), so it's the one worth
+// exercising against a mocked fetch here. "direct" mode is deliberately fetch-less (see
+// triggerDownload) and gets its own dedicated test below instead.
 function setup() {
-  return renderHook(() => useDownloadQueue(), { wrapper: DownloadQueueProvider });
+  const rendered = renderHook(() => useDownloadQueue(), { wrapper: DownloadQueueProvider });
+  act(() => rendered.result.current.setDownloadMethod("blob"));
+  return rendered;
 }
 
 function okResponse(): Response {
@@ -47,6 +52,10 @@ beforeEach(() => {
   // unrelated feature) getting in the way of tests that queue more than one item.
   window.localStorage.setItem("jellydrop:pauseBetweenDownloads", "false");
   HTMLAnchorElement.prototype.click = vi.fn();
+  // jsdom doesn't implement these — only "blob" mode's save path calls them, which the default
+  // "direct"-mode tests never exercised before setup() started forcing "blob" for testability.
+  URL.createObjectURL = vi.fn(() => "blob:mock-url");
+  URL.revokeObjectURL = vi.fn();
 });
 
 afterEach(() => {
@@ -194,5 +203,19 @@ describe("DownloadQueueContext", () => {
 
     expect(reloaded.result.current.items[0].status).toBe("failed");
     expect(reloaded.result.current.items[0].error).toBe("Interrupted by a page reload");
+  });
+
+  it("'direct' mode never calls fetch() — only the browser's own anchor-click request touches the URL (regression: a preflight fetch() here used to make the backend build/transcode the same download twice)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse());
+    vi.stubGlobal("fetch", fetchMock);
+    // setup() forces "blob" for every other test — force "direct" back for this one.
+    const { result } = renderHook(() => useDownloadQueue(), { wrapper: DownloadQueueProvider });
+    act(() => result.current.setDownloadMethod("direct"));
+
+    act(() => result.current.enqueue([{ id: "m1", name: "Movie 1", downloadUrl: "/api/download/show/s1/zip" }]));
+
+    await waitFor(() => expect(result.current.items[0].status).toBe("complete"), LONG_TIMEOUT);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledTimes(1);
   });
 });

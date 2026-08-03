@@ -6,11 +6,13 @@ const { createdArchives } = vi.hoisted(() => ({ createdArchives: [] as FakeArchi
 
 interface FakeArchive {
   appended: Array<{ name: string }>;
+  destroyed: boolean;
 }
 
 vi.mock("archiver", () => {
   class FakeArchiveImpl implements FakeArchive {
     appended: Array<{ name: string }> = [];
+    destroyed = false;
     on() {
       return this;
     }
@@ -21,7 +23,9 @@ vi.mock("archiver", () => {
       this.appended.push({ name: opts.name });
     }
     async finalize() {}
-    destroy() {}
+    destroy() {
+      this.destroyed = true;
+    }
   }
   return {
     ZipArchive: vi.fn().mockImplementation(() => {
@@ -91,6 +95,22 @@ function fakeResponse(): ExpressResponse {
     on: vi.fn(),
     headersSent: false,
   } as unknown as ExpressResponse;
+}
+
+/** Like fakeResponse(), but records `.on(event, handler)` registrations so a test can fire one
+ *  directly — used to simulate the client's connection dropping mid-zip-build (e.g. a device
+ *  going to sleep), which is a real 'error' event on the response stream, not just a 'close'. */
+function fakeResponseCapturingHandlers(): { res: ExpressResponse; trigger: (event: string, ...args: unknown[]) => void } {
+  const handlers = new Map<string, (...args: unknown[]) => void>();
+  const res = {
+    status: vi.fn().mockReturnThis(),
+    setHeader: vi.fn(),
+    on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+      handlers.set(event, handler);
+    }),
+    headersSent: false,
+  } as unknown as ExpressResponse;
+  return { res, trigger: (event, ...args) => handlers.get(event)?.(...args) };
 }
 
 describe("filterUnwatched", () => {
@@ -163,6 +183,21 @@ describe("streamSeasonZip", () => {
 
     const archive = createdArchives.at(-1)!;
     expect(archive.appended.map((entry) => entry.name)).toEqual(["folder.jpg", "Test Show - S01E00 - e1.mkv"]);
+  });
+
+  it("survives the client's connection erroring mid-transfer instead of crashing (regression: a device going to sleep mid-download used to kill the whole process)", async () => {
+    vi.mocked(jellyfinClient.getItemsByIds).mockResolvedValueOnce([
+      { Id: "season-1", Name: "Season 1", Type: "Season", SeriesName: "Test Show", IndexNumber: 1 },
+    ]);
+    vi.mocked(showsService.getSeasonEpisodesForDownload).mockResolvedValueOnce([episode("e1", undefined, 1)]);
+    const { res, trigger } = fakeResponseCapturingHandlers();
+
+    await streamSeasonZip(res, "season-1");
+
+    // Node treats an unlistened 'error' event on any stream as fatal (it throws and crashes the
+    // process) — this must not throw, and must tear the archive down instead of leaving it dangling.
+    expect(() => trigger("error", new Error("ECONNRESET"))).not.toThrow();
+    expect(createdArchives.at(-1)!.destroyed).toBe(true);
   });
 
   it("only transcodes the episodes that actually exceed the requested quality, leaving already-small ones untouched", async () => {

@@ -186,16 +186,14 @@ async function triggerDownload(
   signal: AbortSignal,
   { onProgress, onSaving }: DownloadCallbacks
 ): Promise<void> {
-  const res = await fetch(item.downloadUrl, { signal });
-  if (!res.ok) {
-    await res.body?.cancel().catch(() => undefined);
-    throw new Error(`Download failed with status ${res.status}`);
-  }
-
   if (method === "direct") {
-    // The browser's own download manager reports nothing back to page JS — there is no progress
-    // to show here, by design of the approach, not an oversight.
-    await res.body?.cancel().catch(() => undefined);
+    // No preflight fetch() here on purpose: a GET to item.downloadUrl from JS *and then* handing
+    // that same URL to a synthetic <a> click makes the browser issue its own separate real
+    // request — for a plain file that's just wasted bandwidth, but for a ZIP/transcode download it
+    // means the backend actually builds the whole archive (and runs every episode's transcode)
+    // twice over. The trade-off: a broken URL fails silently in our own UI here (no fetch response
+    // to inspect), same spirit as the no-progress trade-off below — the browser's own download
+    // manager is what's actually driving this, not us.
     const anchor = document.createElement("a");
     anchor.href = item.downloadUrl;
     document.body.appendChild(anchor);
@@ -205,6 +203,12 @@ async function triggerDownload(
     // keeps "Complete" from flashing up before the browser has even shown its own confirmation.
     await sleep(1500);
     return;
+  }
+
+  const res = await fetch(item.downloadUrl, { signal });
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
+    throw new Error(`Download failed with status ${res.status}`);
   }
 
   const totalBytes = Number(res.headers.get("content-length")) || null;

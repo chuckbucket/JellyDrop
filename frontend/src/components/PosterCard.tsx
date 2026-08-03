@@ -26,7 +26,7 @@ export function PosterCard({ to, posterUrl, title, subtitle, action, badge, corn
             button would otherwise never appear. */}
         {(action || cornerLabel) && (
           <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-1 bg-gradient-to-t from-black/85 to-transparent p-2">
-            <span className="truncate text-xs font-medium text-neutral-200">{cornerLabel}</span>
+            <div className="flex min-w-0 flex-col text-xs leading-tight font-medium text-neutral-200">{cornerLabel}</div>
             {action}
           </div>
         )}

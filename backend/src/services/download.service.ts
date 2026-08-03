@@ -208,6 +208,13 @@ async function streamEpisodesAsZip(
 
   const archive = new ZipArchive({ zlib: { level: 0 } });
 
+  // Client can vanish mid-transfer for reasons entirely outside our control — a laptop going to
+  // sleep mid-download is the common one — which surfaces here as either a 'close' (clean-ish
+  // disconnect) or an 'error' (e.g. ECONNRESET) on the response stream. Node treats an unlistened
+  // 'error' event on any stream as fatal — it throws and takes the whole process down — so the
+  // 'error' handler below isn't optional defensive dressing, it's what keeps one stalled client
+  // from crashing the server for everyone else.
+  let clientGone = false;
   archive.on("warning", (err: Error) => console.error("[download] zip archive warning:", err.message));
   archive.on("error", (err: Error) => {
     console.error("[download] zip archive error:", err.message);
@@ -218,18 +225,26 @@ async function streamEpisodesAsZip(
     }
   });
   res.on("close", () => {
+    clientGone = true;
+    if (!archive.destroyed) archive.destroy();
+  });
+  res.on("error", (err: Error) => {
+    console.error("[download] zip response stream error:", err.message);
+    clientGone = true;
     if (!archive.destroyed) archive.destroy();
   });
 
   archive.pipe(res);
 
   for (const { itemId, entryPath } of options.folderImages ?? []) {
+    if (clientGone) return;
     const jfRes = await jellyfinClient.streamProxy(`/Items/${itemId}/Images/Primary`);
     if (!jfRes.ok || !jfRes.body) continue;
     archive.append(Readable.fromWeb(jfRes.body as unknown as WebReadableStream), { name: entryPath, store: true });
   }
 
   for (const episode of episodes) {
+    if (clientGone) return;
     const decision = decideTranscodeForItem(episode, options.quality);
     logTranscodeDecision(episode.Name, options.quality, decision);
     const entryName = buildEntryName(episode);
