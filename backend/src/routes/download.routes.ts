@@ -50,3 +50,19 @@ downloadRouter.get(
     res.json(await downloadService.getShowManifest(req.params.id));
   })
 );
+
+downloadRouter.get(
+  "/download/season/:id/zip",
+  asyncHandler(async (req, res) => {
+    const found = await downloadService.streamSeasonZip(res, req.params.id);
+    if (!found) res.status(404).json({ error: "Season not found" });
+  })
+);
+
+downloadRouter.get(
+  "/download/show/:id/zip",
+  asyncHandler(async (req, res) => {
+    const found = await downloadService.streamShowZip(res, req.params.id);
+    if (!found) res.status(404).json({ error: "Series not found" });
+  })
+);

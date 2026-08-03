@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useDownloadQueue, type DownloadMethod, type QueueItem, type QueueItemStatus } from "../context/DownloadQueueContext";
+import { useDownloadQueue, type DownloadMethod, type HistoryEntry, type QueueItem, type QueueItemStatus } from "../context/DownloadQueueContext";
 import { formatBytes } from "../utils/format";
 
 const statusLabel: Record<QueueItemStatus, string> = {
@@ -26,9 +26,9 @@ const methodOptions: Array<{ value: DownloadMethod; label: string }> = [
   { value: "blob", label: "Blob" },
 ];
 
-// A "Complete" status only ever means "we handed this off" (see triggerDownload's `verified`
-// flag) — if the actual file turns out to be missing, there's no other way to notice that from
-// here, so every resolved state gets a way to just try it again.
+// A "Complete" status only ever means "we handed this off" — neither download method can confirm
+// the file actually landed on disk, so if it turns out to be missing there's no other way to
+// notice that from here. Every resolved state gets a way to just try it again.
 const retryLabel: Partial<Record<QueueItemStatus, string>> = {
   failed: "Retry",
   skipped: "Download anyway",
@@ -90,6 +90,33 @@ function ItemStatusLine({ item }: { item: QueueItem }) {
   );
 }
 
+function HistoryRow({ entry, onRedownload }: { entry: HistoryEntry; onRedownload: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-2 border-b border-neutral-800/60 px-4 py-2 last:border-b-0">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm text-neutral-200">{entry.name}</p>
+        <p className="text-xs text-neutral-500">{formatHistoryTimestamp(entry.downloadedAt)}</p>
+      </div>
+      <button
+        type="button"
+        onClick={onRedownload}
+        className="shrink-0 rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-800"
+      >
+        Download again
+      </button>
+    </div>
+  );
+}
+
+function formatHistoryTimestamp(downloadedAt: number): string {
+  return new Date(downloadedAt).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 export function DownloadQueuePanel() {
   const {
     items,
@@ -99,10 +126,15 @@ export function DownloadQueuePanel() {
     setDownloadMethod,
     awaitingContinue,
     continueQueue,
-    downloadHistoryCount,
+    downloadHistory,
     clearDownloadHistory,
+    redownloadFromHistory,
+    pauseBetweenDownloads,
+    setPauseBetweenDownloads,
   } = useDownloadQueue();
   const [collapsed, setCollapsed] = useState(true);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Make sure a "ready for the next one" prompt is never missed behind a collapsed panel.
   useEffect(() => {
@@ -119,31 +151,45 @@ export function DownloadQueuePanel() {
 
   return (
     <div className="fixed right-4 bottom-4 z-50 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-neutral-800 bg-[var(--color-jelly-surface)] shadow-2xl">
-      <button
-        type="button"
-        onClick={() => setCollapsed((value) => !value)}
-        className="flex w-full items-center justify-between px-4 py-3"
-      >
-        <span className="flex items-center gap-2 text-sm font-semibold text-neutral-100">
-          Downloads
-          {remainingCount > 0 && (
-            <span className="rounded-full bg-[var(--color-jelly-accent)] px-2 py-0.5 text-xs text-white">{remainingCount}</span>
-          )}
-        </span>
-        <span className="flex items-center gap-3 text-xs text-neutral-400">
-          <span>
-            {items.length === 0 ? (
-              "No downloads yet"
-            ) : (
-              <>
-                {remainingCount} remaining · {completeCount} complete
-                {failedCount > 0 && <span className="text-red-400"> · {failedCount} failed</span>}
-              </>
+      <div className="flex items-center">
+        <button
+          type="button"
+          onClick={() => setCollapsed((value) => !value)}
+          className="flex flex-1 items-center justify-between px-4 py-3"
+        >
+          <span className="flex items-center gap-2 text-sm font-semibold text-neutral-100">
+            Downloads
+            {remainingCount > 0 && (
+              <span className="rounded-full bg-[var(--color-jelly-accent)] px-2 py-0.5 text-xs text-white">{remainingCount}</span>
             )}
           </span>
-          <span>{collapsed ? "▲" : "▼"}</span>
-        </span>
-      </button>
+          <span className="flex items-center gap-3 text-xs text-neutral-400">
+            <span>
+              {items.length === 0 ? (
+                "No downloads yet"
+              ) : (
+                <>
+                  {remainingCount} remaining · {completeCount} complete
+                  {failedCount > 0 && <span className="text-red-400"> · {failedCount} failed</span>}
+                </>
+              )}
+            </span>
+            <span>{collapsed ? "▲" : "▼"}</span>
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setSettingsOpen((value) => !value);
+            setCollapsed(false);
+          }}
+          aria-label="Download settings"
+          title="Download settings"
+          className={`shrink-0 px-3 py-3 text-sm transition-colors hover:text-neutral-200 ${settingsOpen && !collapsed ? "text-neutral-100" : "text-neutral-500"}`}
+        >
+          ⚙
+        </button>
+      </div>
 
       {collapsed && activeItem && (
         <div className="px-4 pb-3">
@@ -171,30 +217,62 @@ export function DownloadQueuePanel() {
               </button>
             </div>
           )}
-          <div className="flex items-center justify-between gap-2 border-t border-neutral-800 px-4 py-2 text-xs text-neutral-400">
-            <span>Download method</span>
-            <select
-              value={downloadMethod}
-              onChange={(event) => setDownloadMethod(event.target.value as DownloadMethod)}
-              className="rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-neutral-200"
-            >
-              {methodOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          {downloadHistoryCount > 0 && (
-            <div className="flex items-center justify-between gap-2 border-t border-neutral-800 px-4 py-2 text-xs text-neutral-400">
-              <span>{downloadHistoryCount} already downloaded this session</span>
-              <button
-                type="button"
-                onClick={clearDownloadHistory}
-                className="shrink-0 rounded-md border border-neutral-700 px-2 py-1 text-neutral-200 hover:bg-neutral-800"
-              >
-                Clear history
-              </button>
+          {settingsOpen && (
+            <div className="border-t border-neutral-800 bg-black/20">
+              <p className="px-4 pt-2 text-[11px] font-semibold tracking-wide text-neutral-500 uppercase">Settings</p>
+              <div className="flex items-center justify-between gap-2 px-4 py-2 text-xs text-neutral-400">
+                <span>Download method</span>
+                <select
+                  value={downloadMethod}
+                  onChange={(event) => setDownloadMethod(event.target.value as DownloadMethod)}
+                  className="rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-neutral-200"
+                >
+                  {methodOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <label className="flex items-center justify-between gap-2 px-4 py-2 pb-3 text-xs text-neutral-400">
+                <span>
+                  Pause between downloads
+                  {!pauseBetweenDownloads && <span className="ml-1 text-neutral-500">(10s auto-advance)</span>}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={pauseBetweenDownloads}
+                  onChange={(event) => setPauseBetweenDownloads(event.target.checked)}
+                  className="size-4 shrink-0 accent-[var(--color-jelly-accent)]"
+                />
+              </label>
+            </div>
+          )}
+          {downloadHistory.length > 0 && (
+            <div className="border-t border-neutral-800">
+              <div className="flex items-center justify-between gap-2 px-4 py-2 text-xs text-neutral-400">
+                <button
+                  type="button"
+                  onClick={() => setHistoryOpen((value) => !value)}
+                  className="flex-1 text-left hover:text-neutral-200"
+                >
+                  {historyOpen ? "▼" : "▶"} {downloadHistory.length} in download history
+                </button>
+                <button
+                  type="button"
+                  onClick={clearDownloadHistory}
+                  className="shrink-0 rounded-md border border-neutral-700 px-2 py-1 text-neutral-200 hover:bg-neutral-800"
+                >
+                  Clear history
+                </button>
+              </div>
+              {historyOpen && (
+                <div className="max-h-52 overflow-y-auto border-t border-neutral-800/60">
+                  {downloadHistory.map((entry) => (
+                    <HistoryRow key={entry.id} entry={entry} onRedownload={() => redownloadFromHistory(entry)} />
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {items.length === 0 ? (

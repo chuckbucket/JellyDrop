@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { ShowDetailDTO } from "@shared/types";
-import { getShow, getShowManifest } from "../api/client";
+import { getShow, getShowManifest, showZipUrl } from "../api/client";
 import { ErrorState } from "../components/ErrorState";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { SeasonRow } from "../components/SeasonRow";
@@ -54,14 +54,23 @@ export function ShowDetail() {
             <p className="text-neutral-400">{metaParts.join(" · ")}</p>
             {show.overview && <p className="mt-3 max-w-2xl text-sm text-neutral-300">{show.overview}</p>}
           </div>
-          <button
-            type="button"
-            onClick={handleDownloadSeries}
-            disabled={queuingAll}
-            className="w-fit rounded-md bg-[var(--color-jelly-accent)] px-4 py-2 font-semibold text-white transition-colors hover:bg-[var(--color-jelly-accent-hover)] disabled:opacity-50"
-          >
-            {queuingAll ? "Queuing…" : "Download Entire Series"}
-          </button>
+          <div className="flex w-fit flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={handleDownloadSeries}
+              disabled={queuingAll}
+              className="rounded-md bg-[var(--color-jelly-accent)] px-4 py-2 font-semibold text-white transition-colors hover:bg-[var(--color-jelly-accent-hover)] disabled:opacity-50"
+            >
+              {queuingAll ? "Queuing…" : "Download Entire Series"}
+            </button>
+            <a
+              href={showZipUrl(show.id)}
+              download
+              className="rounded-md border border-neutral-700 px-4 py-2 text-center font-semibold text-neutral-200 transition-colors hover:bg-neutral-800"
+            >
+              Download as ZIP
+            </a>
+          </div>
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { SeasonSummaryDTO } from "@shared/types";
-import { getSeasonManifest } from "../api/client";
+import { getSeasonManifest, seasonZipUrl } from "../api/client";
 import { useDownloadQueue } from "../context/DownloadQueueContext";
 import { formatBytes } from "../utils/format";
 
@@ -42,14 +42,23 @@ export function SeasonRow({ seriesId, season }: SeasonRowProps) {
           {season.overview && <p className="mt-1 line-clamp-2 text-sm text-neutral-400">{season.overview}</p>}
         </div>
       </Link>
-      <button
-        type="button"
-        onClick={handleDownloadSeason}
-        disabled={queuing}
-        className="shrink-0 rounded-md bg-[var(--color-jelly-accent)] px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--color-jelly-accent-hover)] disabled:opacity-50"
-      >
-        {queuing ? "Queuing…" : "Download Season"}
-      </button>
+      <div className="flex shrink-0 flex-col gap-1.5 sm:flex-row">
+        <button
+          type="button"
+          onClick={handleDownloadSeason}
+          disabled={queuing}
+          className="rounded-md bg-[var(--color-jelly-accent)] px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--color-jelly-accent-hover)] disabled:opacity-50"
+        >
+          {queuing ? "Queuing…" : "Download Season"}
+        </button>
+        <a
+          href={seasonZipUrl(season.id)}
+          download
+          className="rounded-md border border-neutral-700 px-3 py-1.5 text-center text-sm font-semibold text-neutral-200 transition-colors hover:bg-neutral-800"
+        >
+          As ZIP
+        </a>
+      </div>
     </div>
   );
 }

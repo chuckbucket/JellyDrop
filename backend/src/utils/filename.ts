@@ -17,6 +17,10 @@ export function buildMovieFilename(name: string, year: number | null, container:
   return `${sanitizeFilenameComponent(base)}.${primaryExtension(container)}`;
 }
 
+export function buildZipFilename(name: string): string {
+  return `${sanitizeFilenameComponent(name)}.zip`;
+}
+
 export function buildEpisodeFilename(
   seriesName: string,
   seasonNumber: number | null,

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 export type QueueItemStatus = "waiting" | "downloading" | "saving" | "complete" | "failed" | "skipped";
 
@@ -20,6 +20,15 @@ export interface EnqueueInput {
   id: string;
   name: string;
   downloadUrl: string;
+}
+
+/** A previously-completed download, kept around (and persisted) so it can be shown as a list and
+ *  re-triggered on demand — not just counted. */
+export interface HistoryEntry {
+  id: string;
+  name: string;
+  downloadUrl: string;
+  downloadedAt: number;
 }
 
 /**
@@ -45,15 +54,24 @@ interface DownloadQueueContextValue {
    *  browser's own per-file dialog yet — firing the next one too soon just replaces it and silently
    *  drops the file — so instead of guessing a timeout, the queue simply waits for this. */
   continueQueue: () => void;
-  /** How many distinct items have completed at least once before — for a "clear history" affordance. */
-  downloadHistoryCount: number;
+  /** When false, the queue never pauses for continueQueue() and just runs straight through — for
+   *  setups that don't hit a per-file browser dialog at all (e.g. HTTPS) and don't need the gate. */
+  pauseBetweenDownloads: boolean;
+  setPauseBetweenDownloads: (value: boolean) => void;
+  /** Every distinct item that has completed at least once, newest first. Persists across reloads
+   *  until explicitly cleared — it's a real record, not a same-session counter. */
+  downloadHistory: HistoryEntry[];
   clearDownloadHistory: () => void;
+  /** Re-queues an item straight from history, bypassing the "already downloaded" skip check —
+   *  clicking this is already the explicit override. */
+  redownloadFromHistory: (entry: HistoryEntry) => void;
 }
 
 const DownloadQueueContext = createContext<DownloadQueueContextValue | null>(null);
 
 const DOWNLOAD_METHOD_STORAGE_KEY = "jellydrop:downloadMethod";
 const DOWNLOAD_HISTORY_STORAGE_KEY = "jellydrop:downloadHistory";
+const PAUSE_BETWEEN_DOWNLOADS_STORAGE_KEY = "jellydrop:pauseBetweenDownloads";
 
 // Firefox (including Firefox for Android) shows its own "where do you want to save this" system
 // dialog for every plain-link download — but treats a blob: URL as a page-generated file and saves
@@ -71,25 +89,48 @@ const PROGRESS_UPDATE_THROTTLE_MS = 200;
 // notice a native browser dialog", which is exactly the bug this used to cause; see awaitingContinue.
 const STARTUP_DELAY_MS = 300;
 
+// With pauseBetweenDownloads off, there's no explicit "Continue" tap giving time to handle a
+// per-file browser dialog — this is the best fallback available, most needed for "direct" (fires
+// the next request almost instantly otherwise); "blob" already spends real time reading each file
+// before moving on, so this mostly just adds margin on top of that.
+const AUTO_ADVANCE_DELAY_MS = 10000;
+
 function loadStoredMethod(): DownloadMethod {
   if (typeof window === "undefined") return "auto";
   const stored = window.localStorage.getItem(DOWNLOAD_METHOD_STORAGE_KEY);
   return stored === "direct" || stored === "blob" || stored === "auto" ? stored : "auto";
 }
 
-function loadDownloadHistory(): Set<string> {
-  if (typeof window === "undefined") return new Set();
+function loadPauseBetweenDownloads(): boolean {
+  if (typeof window === "undefined") return true;
+  return window.localStorage.getItem(PAUSE_BETWEEN_DOWNLOADS_STORAGE_KEY) !== "false";
+}
+
+function isHistoryEntry(value: unknown): value is HistoryEntry {
+  if (typeof value !== "object" || value === null) return false;
+  const entry = value as Record<string, unknown>;
+  return (
+    typeof entry.id === "string" &&
+    typeof entry.name === "string" &&
+    typeof entry.downloadUrl === "string" &&
+    typeof entry.downloadedAt === "number"
+  );
+}
+
+function loadDownloadHistory(): Map<string, HistoryEntry> {
+  if (typeof window === "undefined") return new Map();
   try {
     const stored = window.localStorage.getItem(DOWNLOAD_HISTORY_STORAGE_KEY);
     const parsed: unknown = stored ? JSON.parse(stored) : [];
-    return Array.isArray(parsed) ? new Set(parsed.filter((id): id is string => typeof id === "string")) : new Set();
+    if (!Array.isArray(parsed)) return new Map();
+    return new Map(parsed.filter(isHistoryEntry).map((entry) => [entry.id, entry]));
   } catch {
-    return new Set();
+    return new Map();
   }
 }
 
-function saveDownloadHistory(history: Set<string>): void {
-  window.localStorage.setItem(DOWNLOAD_HISTORY_STORAGE_KEY, JSON.stringify([...history]));
+function saveDownloadHistory(history: Map<string, HistoryEntry>): void {
+  window.localStorage.setItem(DOWNLOAD_HISTORY_STORAGE_KEY, JSON.stringify([...history.values()]));
 }
 
 function sleep(ms: number): Promise<void> {
@@ -199,13 +240,17 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<QueueItem[]>([]);
   const [downloadMethod, setDownloadMethodState] = useState<DownloadMethod>(loadStoredMethod);
   const [awaitingContinue, setAwaitingContinue] = useState(false);
-  const [downloadHistory, setDownloadHistory] = useState<Set<string>>(loadDownloadHistory);
+  const [downloadHistory, setDownloadHistory] = useState<Map<string, HistoryEntry>>(loadDownloadHistory);
+  const [pauseBetweenDownloads, setPauseBetweenDownloadsState] = useState<boolean>(loadPauseBetweenDownloads);
   const isProcessingRef = useRef(false);
   // Mirrors `items` on every render so the long-running async download below can check the
   // genuinely-current queue when it finishes, instead of the snapshot from when it started — items
   // enqueued via separate clicks while a download is still in flight would otherwise go unseen.
   const itemsRef = useRef<QueueItem[]>(items);
   itemsRef.current = items;
+  // The very first download in a chain never needs the long auto-advance delay — nothing preceded
+  // it that a per-file dialog could get replaced. Every one after that does, when unpaused.
+  const hasStartedAnyRef = useRef(false);
 
   const continueQueue = useCallback(() => {
     setAwaitingContinue(false);
@@ -216,9 +261,31 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
     window.localStorage.setItem(DOWNLOAD_METHOD_STORAGE_KEY, method);
   }, []);
 
+  const setPauseBetweenDownloads = useCallback((value: boolean) => {
+    setPauseBetweenDownloadsState(value);
+    window.localStorage.setItem(PAUSE_BETWEEN_DOWNLOADS_STORAGE_KEY, String(value));
+  }, []);
+
   const clearDownloadHistory = useCallback(() => {
-    setDownloadHistory(new Set());
+    setDownloadHistory(new Map());
     window.localStorage.removeItem(DOWNLOAD_HISTORY_STORAGE_KEY);
+  }, []);
+
+  // Bypasses the skip-check on purpose — clicking "Download again" from the history list is already
+  // the explicit override, so this goes straight to "waiting" instead of through enqueue().
+  const redownloadFromHistory = useCallback((entry: HistoryEntry) => {
+    setItems((prev) => [
+      ...prev,
+      {
+        queueId: nextQueueId(),
+        id: entry.id,
+        name: entry.name,
+        downloadUrl: entry.downloadUrl,
+        status: "waiting" as QueueItemStatus,
+        receivedBytes: 0,
+        totalBytes: null,
+      },
+    ]);
   }, []);
 
   // Anything already in the download history is added as "skipped" instead of actually re-fetched —
@@ -275,14 +342,19 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
       setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "saving" as const } : item)));
     };
 
+    // Only items after the very first in a chain — and only when nothing else (the Continue gate)
+    // is already pacing things — get the long delay; see AUTO_ADVANCE_DELAY_MS.
+    const delayMs = !hasStartedAnyRef.current || pauseBetweenDownloads ? STARTUP_DELAY_MS : AUTO_ADVANCE_DELAY_MS;
+    hasStartedAnyRef.current = true;
+
     void (async () => {
-      await sleep(STARTUP_DELAY_MS);
+      await sleep(delayMs);
       try {
         await triggerDownload(next, resolvedMethod, { onProgress, onSaving });
         setItems((prev) => prev.map((item) => (item.queueId === next.queueId ? { ...item, status: "complete" as const } : item)));
         setDownloadHistory((prev) => {
-          if (prev.has(next.id)) return prev;
-          const updated = new Set(prev).add(next.id);
+          const updated = new Map(prev);
+          updated.set(next.id, { id: next.id, name: next.name, downloadUrl: next.downloadUrl, downloadedAt: Date.now() });
           saveDownloadHistory(updated);
           return updated;
         });
@@ -293,14 +365,21 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
         );
       } finally {
         isProcessingRef.current = false;
-        // Read fresh, not the stale snapshot from when this item started — an item enqueued via a
-        // separate click while this one was downloading needs to pause here just as much as one
-        // that was already queued up front.
-        const hasMoreWaiting = itemsRef.current.some((item) => item.status === "waiting" && item.queueId !== next.queueId);
-        if (hasMoreWaiting) setAwaitingContinue(true);
+        if (pauseBetweenDownloads) {
+          // Read fresh, not the stale snapshot from when this item started — an item enqueued via a
+          // separate click while this one was downloading needs to pause here just as much as one
+          // that was already queued up front.
+          const hasMoreWaiting = itemsRef.current.some((item) => item.status === "waiting" && item.queueId !== next.queueId);
+          if (hasMoreWaiting) setAwaitingContinue(true);
+        }
       }
     })();
-  }, [items, downloadMethod, awaitingContinue]);
+  }, [items, downloadMethod, awaitingContinue, pauseBetweenDownloads]);
+
+  const downloadHistoryList = useMemo(
+    () => [...downloadHistory.values()].sort((a, b) => b.downloadedAt - a.downloadedAt),
+    [downloadHistory]
+  );
 
   return (
     <DownloadQueueContext.Provider
@@ -313,8 +392,11 @@ export function DownloadQueueProvider({ children }: { children: ReactNode }) {
         setDownloadMethod,
         awaitingContinue,
         continueQueue,
-        downloadHistoryCount: downloadHistory.size,
+        downloadHistory: downloadHistoryList,
         clearDownloadHistory,
+        redownloadFromHistory,
+        pauseBetweenDownloads,
+        setPauseBetweenDownloads,
       }}
     >
       {children}

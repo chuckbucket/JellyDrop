@@ -82,3 +82,14 @@ export function movieDownloadUrl(movieId: string): string {
 export function episodeDownloadUrl(episodeId: string): string {
   return `/api/download/episode/${episodeId}`;
 }
+
+/** A single native browser download of every episode bundled into one zip — bypasses the JS queue
+ *  entirely (no per-file progress, no history tracking), trading that for one dialog instead of one
+ *  per episode. */
+export function seasonZipUrl(seasonId: string): string {
+  return `/api/download/season/${seasonId}/zip`;
+}
+
+export function showZipUrl(seriesId: string): string {
+  return `/api/download/show/${seriesId}/zip`;
+}
