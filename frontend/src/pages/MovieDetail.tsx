@@ -53,7 +53,7 @@ export function MovieDetail() {
           {metaParts.length > 0 && <p className="text-neutral-400">{metaParts.join(" · ")}</p>}
           {movie.overview && <p className="mt-3 max-w-2xl text-sm text-neutral-300">{movie.overview}</p>}
         </div>
-        <DownloadButton label="Download Movie" onDownload={handleDownload} className="w-fit" />
+        <DownloadButton label="Download Movie" onDownload={handleDownload} sizeOptions={movie.sizeOptions} className="w-fit" />
       </div>
     </div>
   );

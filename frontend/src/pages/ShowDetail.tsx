@@ -83,8 +83,9 @@ export function ShowDetail() {
               label={queuingAll ? "Queuing…" : "Download Entire Series"}
               disabled={queuingAll}
               onDownload={handleDownloadSeries}
+              sizeOptions={show.sizeOptions}
             />
-            <DownloadButton label="Download as ZIP" variant="secondary" onDownload={handleDownloadZip} />
+            <DownloadButton label="Download as ZIP" variant="secondary" onDownload={handleDownloadZip} sizeOptions={show.sizeOptions} />
           </div>
         </div>
       </div>

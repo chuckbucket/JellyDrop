@@ -23,6 +23,8 @@ export interface MovieDTO {
   sizeBytes: number | null;
   /** null when nobody is logged in — watched status is only known per Jellyfin user. */
   watched: boolean | null;
+  /** Empty when the file is already small enough that no tier would shrink it further. */
+  sizeOptions: SizeOption[];
 }
 
 export interface SeriesDTO {
@@ -45,6 +47,9 @@ export interface SeasonSummaryDTO {
   posterUrl: string;
   /** null when nobody is logged in. */
   watchedCount: number | null;
+  /** Aggregate across every episode in the season — each episode's own tier decision (skip if
+   *  already small) is respected, so this is the *actual* expected total, not a naive multiply. */
+  sizeOptions: SizeOption[];
 }
 
 export interface ShowDetailDTO {
@@ -55,6 +60,8 @@ export interface ShowDetailDTO {
   posterUrl: string;
   totalSizeBytes: number | null;
   seasons: SeasonSummaryDTO[];
+  /** Aggregate across every episode in the series — see SeasonSummaryDTO.sizeOptions. */
+  sizeOptions: SizeOption[];
 }
 
 export interface EpisodeDTO {
@@ -66,6 +73,7 @@ export interface EpisodeDTO {
   sizeBytes: number | null;
   /** null when nobody is logged in — watched status is only known per Jellyfin user. */
   watched: boolean | null;
+  sizeOptions: SizeOption[];
 }
 
 export interface SeasonDetailDTO {
@@ -100,6 +108,7 @@ export interface SearchResultDTO {
   /** Only ever populated for movies — series don't carry a media file/resolution of their own. */
   resolution: string | null;
   sizeBytes: number | null;
+  sizeOptions: SizeOption[];
 }
 
 export interface DownloadManifestItem {
@@ -112,8 +121,18 @@ export interface DownloadManifestDTO {
   items: DownloadManifestItem[];
 }
 
-/** "original" = no transcoding, served as-is. Others request Jellyfin transcode down to that height. */
-export type TranscodeQuality = "original" | "1080p" | "720p" | "480p" | "360p";
+/** "original" = no transcoding, served as-is. "small"/"medium"/"large" are fixed bitrate tiers —
+ *  see SizeOption for the actual per-item estimated result each one would produce. */
+export type TranscodeQuality = "original" | "small" | "medium" | "large";
+
+/** One selectable transcode tier for a specific item — `estimatedBytes` is that tier's target
+ *  bitrate scaled by this item's own duration, so a short episode and a long movie each see a
+ *  size estimate that's actually meaningful for them. Only tiers that would genuinely shrink the
+ *  file are ever included — see decideTranscode's "never offer to make it bigger" rule. */
+export interface SizeOption {
+  quality: Exclude<TranscodeQuality, "original">;
+  estimatedBytes: number;
+}
 
 export type AuthMode = "open" | "required";
 

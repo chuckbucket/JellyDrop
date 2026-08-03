@@ -13,7 +13,7 @@ export async function search(query: string): Promise<SearchResultDTO[]> {
     searchTerm: query,
     IncludeItemTypes: "Movie,Series",
     Recursive: "true",
-    Fields: "ProductionYear,Container,MediaSources",
+    Fields: "ProductionYear,Container,MediaSources,RunTimeTicks",
     Limit: 50,
   });
 

@@ -29,7 +29,7 @@ export function EpisodeRow({ episode }: EpisodeRowProps) {
         </div>
         {metaParts.length > 0 && <p className="text-sm text-neutral-400">{metaParts.join(" · ")}</p>}
       </div>
-      <DownloadButton label="Download Episode" onDownload={handleDownload} />
+      <DownloadButton label="Download Episode" onDownload={handleDownload} sizeOptions={episode.sizeOptions} />
     </div>
   );
 }

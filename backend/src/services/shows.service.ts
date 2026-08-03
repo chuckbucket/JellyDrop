@@ -1,8 +1,9 @@
-import type { EpisodeDTO, PagedResult, SeasonDetailDTO, SeasonSummaryDTO, SeriesDTO, ShowDetailDTO } from "@shared/types";
+import type { EpisodeDTO, PagedResult, SeasonDetailDTO, SeasonSummaryDTO, SeriesDTO, ShowDetailDTO, SizeOption } from "@shared/types";
 import { jellyfinClient } from "../jellyfin/client";
 import type { JellyfinItem } from "../jellyfin/types";
-import { getFileSizeBytes, getResolutionLabel, hasMediaFile, mapSeries, mapWatched, type SeasonStats } from "../utils/mappers";
+import { getFileSizeBytes, getResolutionLabel, getSizeOptions, hasMediaFile, mapSeries, mapWatched, type SeasonStats } from "../utils/mappers";
 import { fetchFilteredPage } from "../utils/paginate";
+import { computeAggregateSizeOptions, estimateBitrateBps, ticksToSeconds, type EpisodeSizeInput } from "./transcode.service";
 import { createTtlCache } from "../utils/ttlCache";
 
 export interface GetShowsOptions {
@@ -124,6 +125,7 @@ function byIndexNumber(a: JellyfinItem, b: JellyfinItem): number {
 interface SeasonsSummary {
   seasons: SeasonSummaryDTO[];
   totalSizeBytes: number | null;
+  sizeOptions: SizeOption[];
 }
 
 /**
@@ -138,8 +140,8 @@ interface SeasonsSummary {
  */
 async function getSeasonsWithEpisodeCounts(seriesId: string, userId?: string): Promise<SeasonsSummary> {
   const fields = userId
-    ? ["ParentIndexNumber", "SeasonId", "Container", "MediaSources", "UserData"]
-    : ["ParentIndexNumber", "SeasonId", "Container", "MediaSources"];
+    ? ["ParentIndexNumber", "SeasonId", "Container", "MediaSources", "RunTimeTicks", "UserData"]
+    : ["ParentIndexNumber", "SeasonId", "Container", "MediaSources", "RunTimeTicks"];
   const [seasons, episodes] = await Promise.all([
     jellyfinClient.getSeasons(seriesId, ["Overview"]),
     jellyfinClient.getEpisodes(seriesId, { fields, userId }),
@@ -148,6 +150,8 @@ async function getSeasonsWithEpisodeCounts(seriesId: string, userId?: string): P
   const countBySeasonId = new Map<string, number>();
   const sizeBySeasonId = new Map<string, number>();
   const watchedCountBySeasonId = new Map<string, number>();
+  const sizeInputsBySeasonId = new Map<string, EpisodeSizeInput[]>();
+  const allSizeInputs: EpisodeSizeInput[] = [];
   let totalSizeBytes = 0;
   let anySizeKnown = false;
 
@@ -161,6 +165,16 @@ async function getSeasonsWithEpisodeCounts(seriesId: string, userId?: string): P
       totalSizeBytes += size;
       sizeBySeasonId.set(episode.SeasonId, (sizeBySeasonId.get(episode.SeasonId) ?? 0) + size);
     }
+
+    const sizeInput: EpisodeSizeInput = {
+      sizeBytes: size,
+      bitrateBps: estimateBitrateBps(size, episode.RunTimeTicks),
+      durationSeconds: ticksToSeconds(episode.RunTimeTicks),
+    };
+    const seasonInputs = sizeInputsBySeasonId.get(episode.SeasonId) ?? [];
+    seasonInputs.push(sizeInput);
+    sizeInputsBySeasonId.set(episode.SeasonId, seasonInputs);
+    allSizeInputs.push(sizeInput);
 
     if (userId && episode.UserData?.Played) {
       watchedCountBySeasonId.set(episode.SeasonId, (watchedCountBySeasonId.get(episode.SeasonId) ?? 0) + 1);
@@ -178,14 +192,19 @@ async function getSeasonsWithEpisodeCounts(seriesId: string, userId?: string): P
       overview: season.Overview ?? null,
       posterUrl: `/api/image/${season.Id}`,
       watchedCount: userId ? (watchedCountBySeasonId.get(season.Id) ?? 0) : null,
+      sizeOptions: computeAggregateSizeOptions(sizeInputsBySeasonId.get(season.Id) ?? []),
     }))
     .filter((season) => season.episodeCount > 0);
 
-  return { seasons: seasonSummaries, totalSizeBytes: anySizeKnown ? totalSizeBytes : null };
+  return {
+    seasons: seasonSummaries,
+    totalSizeBytes: anySizeKnown ? totalSizeBytes : null,
+    sizeOptions: computeAggregateSizeOptions(allSizeInputs),
+  };
 }
 
 export async function getShowDetail(seriesId: string, userId?: string): Promise<ShowDetailDTO | null> {
-  const [items, { seasons, totalSizeBytes }] = await Promise.all([
+  const [items, { seasons, totalSizeBytes, sizeOptions }] = await Promise.all([
     jellyfinClient.getItemsByIds([seriesId], ["ProductionYear", "Overview"]),
     getSeasonsWithEpisodeCounts(seriesId, userId),
   ]);
@@ -199,6 +218,7 @@ export async function getShowDetail(seriesId: string, userId?: string): Promise<
     posterUrl: `/api/image/${item.Id}`,
     totalSizeBytes,
     seasons,
+    sizeOptions,
   };
 }
 
@@ -211,6 +231,7 @@ function toEpisodeDTO(item: JellyfinItem, userRequested: boolean): EpisodeDTO {
     resolution: getResolutionLabel(item),
     sizeBytes: getFileSizeBytes(item),
     watched: mapWatched(item, userRequested),
+    sizeOptions: getSizeOptions(item),
   };
 }
 
@@ -220,8 +241,8 @@ export async function getSeasonDetail(seasonId: string, userId?: string): Promis
   if (!season?.SeriesId) return null;
 
   const fields = userId
-    ? ["Container", "SeriesName", "ParentIndexNumber", "IndexNumber", "MediaSources", "UserData"]
-    : ["Container", "SeriesName", "ParentIndexNumber", "IndexNumber", "MediaSources"];
+    ? ["Container", "SeriesName", "ParentIndexNumber", "IndexNumber", "MediaSources", "RunTimeTicks", "UserData"]
+    : ["Container", "SeriesName", "ParentIndexNumber", "IndexNumber", "MediaSources", "RunTimeTicks"];
   const episodes = await jellyfinClient.getEpisodes(season.SeriesId, { seasonId, fields, userId });
 
   return {

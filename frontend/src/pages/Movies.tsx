@@ -40,6 +40,7 @@ export function Movies() {
                 watched={movie.watched}
                 resolution={movie.resolution}
                 sizeBytes={movie.sizeBytes}
+                sizeOptions={movie.sizeOptions}
               />
             ))}
           </PosterGrid>

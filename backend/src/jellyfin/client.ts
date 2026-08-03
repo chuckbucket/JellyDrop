@@ -93,22 +93,32 @@ class JellyfinClient {
   }
 
   /**
-   * Asks Jellyfin's own transcoder to re-encode an item down to `targetHeight` and stream the
-   * result back as a single continuous file (not HLS segments) — the same progressive
+   * Asks Jellyfin's own transcoder to re-encode an item down to `targetWidth`x`targetHeight` and
+   * stream the result back as a single continuous file (not HLS segments) — the same progressive
    * transcode-to-a-stream endpoint real clients fall back to when they can't direct-play. Output
    * is always Matroska: it streams cleanly in one forward pass, unlike MP4's `moov`-atom concerns.
+   *
+   * Deliberately sends explicit `width`+`height` together, not `maxWidth`/`maxHeight` — confirmed
+   * live against a real server that under hardware-accelerated transcoding, Jellyfin ignores
+   * max-bound params entirely and picks its own resolution from `videoBitRate` alone, while
+   * `width`+`height` given *together* (either alone isn't enough) reliably produces the exact
+   * requested size. `targetWidth` must already be computed from the source's own aspect ratio by
+   * the caller (see transcode.service's computeTargetWidth) — this method doesn't know or assume
+   * an aspect ratio itself.
+   *
    * A random per-request `playSessionId`/fixed `deviceId` are only there because Jellyfin requires
    * them to identify the encoding job; there's no session lifecycle to manage beyond that —
    * Jellyfin tears down the ffmpeg process when the response connection closes, same as any other
    * ad-hoc stream. No Range support: a live transcode can't seek, so it's never forwarded here.
    */
-  async streamTranscodedProxy(itemId: string, targetHeight: number, targetBitrateBps: number): Promise<Response> {
+  async streamTranscodedProxy(itemId: string, targetWidth: number, targetHeight: number, targetBitrateBps: number): Promise<Response> {
     const url = this.buildUrl(`/Videos/${itemId}/stream`, {
       static: "false",
       container: "mkv",
       videoCodec: "h264",
       audioCodec: "aac",
-      maxHeight: targetHeight,
+      width: targetWidth,
+      height: targetHeight,
       videoBitRate: targetBitrateBps,
       deviceId: "jellydrop",
       playSessionId: randomUUID(),

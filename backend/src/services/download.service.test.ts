@@ -213,6 +213,41 @@ describe("streamSeasonZip", () => {
     expect(jellyfinClient.streamProxy).toHaveBeenCalledTimes(3);
   });
 
+  it("cancels the in-flight episode's own stream when the client disconnects mid-transcode — not just our side of it — so Jellyfin actually stops transcoding instead of continuing for a client that's gone", async () => {
+    vi.mocked(jellyfinClient.getItemsByIds).mockResolvedValueOnce([
+      { Id: "season-1", Name: "Season 1", Type: "Season", SeriesName: "Test Show", IndexNumber: 1 },
+    ]);
+    vi.mocked(showsService.getSeasonEpisodesForDownload).mockResolvedValueOnce([episode("e1", undefined, 1)]);
+
+    let controller1!: ReadableStreamDefaultController<Uint8Array>;
+    const stream1 = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller1 = c;
+      },
+    });
+    vi.mocked(jellyfinClient.streamProxy)
+      .mockImplementationOnce(async () => ({ ok: true, body: freshStream() }) as unknown as Response) // folder.jpg
+      .mockImplementationOnce(async () => ({ ok: true, body: stream1 }) as unknown as Response); // e1 — held open, simulating a live transcode
+
+    const { res, trigger } = fakeResponseCapturingHandlers();
+    const donePromise = streamSeasonZip(res, "season-1");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const archive = createdArchives.at(-1)!;
+    const episodeStream = archive.appended.find((entry) => entry.name.includes("e1"))!.stream as Readable;
+    expect(episodeStream.destroyed).toBe(false);
+
+    trigger("close"); // the client cancelling/disconnecting
+
+    // This is the actual mechanism that stops Jellyfin from continuing to transcode for a client
+    // that's gone — destroying this specific stream cancels the fetch it came from.
+    expect(episodeStream.destroyed).toBe(true);
+
+    // The loop must also unblock (not hang forever awaiting a stream that's now destroyed) —
+    // appendAndDrain's 'close' listener is what makes that happen.
+    await donePromise;
+  });
+
   it("attaches an error listener to each per-episode stream before handing it to the archive (regression: an unhandled 'error' from a Jellyfin-side hiccup, not just a disconnecting client, used to crash the process)", async () => {
     vi.mocked(jellyfinClient.getItemsByIds).mockResolvedValueOnce([
       { Id: "season-1", Name: "Season 1", Type: "Season", SeriesName: "Test Show", IndexNumber: 1 },
@@ -243,27 +278,28 @@ describe("streamSeasonZip", () => {
     expect(createdArchives.at(-1)!.destroyed).toBe(true);
   });
 
-  it("only transcodes the episodes that actually exceed the requested quality, leaving already-small ones untouched", async () => {
+  it("only transcodes the episodes that actually exceed the requested quality's bitrate, leaving already-efficient ones untouched", async () => {
     vi.mocked(jellyfinClient.getItemsByIds).mockResolvedValueOnce([
       { Id: "season-1", Name: "Season 1", Type: "Season", SeriesName: "Test Show", IndexNumber: 1 },
     ]);
     vi.mocked(showsService.getSeasonEpisodesForDownload).mockResolvedValueOnce([
-      // Already 480p — quality "480p" should skip transcoding this one.
-      episode("small", undefined, 1, { height: 480, sizeBytes: 100_000_000, runTimeTicks: 400 * 10_000_000 }),
-      // 1080p — quality "480p" should transcode this one.
+      // 1Mbps — already under "medium"'s 1.2Mbps target, so this one should be skipped.
+      episode("small", undefined, 1, { height: 480, sizeBytes: 50_000_000, runTimeTicks: 400 * 10_000_000 }),
+      // 40Mbps — well over "medium"'s target, so this one should be transcoded.
       episode("big", undefined, 1, { height: 1080, sizeBytes: 2_000_000_000, runTimeTicks: 400 * 10_000_000 }),
     ]);
 
-    await streamSeasonZip(fakeResponse(), "season-1", { quality: "480p" });
+    await streamSeasonZip(fakeResponse(), "season-1", { quality: "medium" });
 
     expect(jellyfinClient.streamProxy).toHaveBeenCalledWith("/Items/small/Download");
-    expect(jellyfinClient.streamTranscodedProxy).toHaveBeenCalledWith("big", 480, 1_200_000);
+    // No Width in the mocked MediaSources, so this falls back to a 16:9 guess at height 480.
+    expect(jellyfinClient.streamTranscodedProxy).toHaveBeenCalledWith("big", 852, 480, 1_200_000);
 
     const archive = createdArchives.at(-1)!;
     expect(archive.appended.map((entry) => entry.name)).toEqual([
       "folder.jpg",
       "Test Show - S01E00 - small.mkv",
-      "Test Show - S01E00 - big (Transcoded 480p).mkv",
+      "Test Show - S01E00 - big (Transcoded Medium).mkv",
     ]);
   });
 });
@@ -289,13 +325,14 @@ describe("streamMovie", () => {
       movieItem({ MediaSources: [{ Size: 4_000_000_000, MediaStreams: [{ Type: "Video", Height: 2160 }] }], RunTimeTicks: 7200 * 10_000_000 }),
     ]);
 
-    const found = await streamMovie(fakeResponse(), "movie-1", { quality: "720p" });
+    const found = await streamMovie(fakeResponse(), "movie-1", { quality: "large" });
 
     expect(found).toBe(true);
-    expect(jellyfinClient.streamTranscodedProxy).toHaveBeenCalledWith("movie-1", 720, 2_500_000);
+    // No Width in the mocked MediaSources, so this falls back to a 16:9 guess at height 720.
+    expect(jellyfinClient.streamTranscodedProxy).toHaveBeenCalledWith("movie-1", 1280, 720, 2_500_000);
     expect(jellyfinClient.streamProxy).not.toHaveBeenCalled();
     expect(vi.mocked(pipeJellyfinResponse).mock.calls[0][2]).toMatchObject({
-      filename: "A Movie (2020) (Transcoded 720p).mkv",
+      filename: "A Movie (2020) (Transcoded Large).mkv",
       transcoded: true,
     });
   });
@@ -312,7 +349,7 @@ describe("streamEpisode", () => {
       episode("e1", undefined, 1, { height: 480, sizeBytes: 100_000_000, runTimeTicks: 400 * 10_000_000 }),
     ]);
 
-    const found = await streamEpisode(fakeResponse(), "e1", { quality: "480p" });
+    const found = await streamEpisode(fakeResponse(), "e1", { quality: "large" });
 
     expect(found).toBe(true);
     expect(jellyfinClient.streamProxy).toHaveBeenCalledWith("/Items/e1/Download", undefined);

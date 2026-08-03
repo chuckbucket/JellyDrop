@@ -69,8 +69,13 @@ export function SeasonRow({ seriesId, season }: SeasonRowProps) {
           </label>
         )}
         <div className="flex flex-col gap-1.5 sm:flex-row">
-          <DownloadButton label={queuing ? "Queuing…" : "Download Season"} disabled={queuing} onDownload={handleDownloadSeason} />
-          <DownloadButton label="As ZIP" variant="secondary" onDownload={handleDownloadZip} />
+          <DownloadButton
+            label={queuing ? "Queuing…" : "Download Season"}
+            disabled={queuing}
+            onDownload={handleDownloadSeason}
+            sizeOptions={season.sizeOptions}
+          />
+          <DownloadButton label="As ZIP" variant="secondary" onDownload={handleDownloadZip} sizeOptions={season.sizeOptions} />
         </div>
       </div>
     </div>

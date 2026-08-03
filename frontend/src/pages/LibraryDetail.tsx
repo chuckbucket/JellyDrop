@@ -83,6 +83,7 @@ export function LibraryDetail() {
                   watched={(item as MovieDTO).watched}
                   resolution={(item as MovieDTO).resolution}
                   sizeBytes={(item as MovieDTO).sizeBytes}
+                  sizeOptions={(item as MovieDTO).sizeOptions}
                 />
               ) : (
                 <PosterCard

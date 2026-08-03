@@ -1,5 +1,6 @@
-import type { LibraryDTO, MovieDTO, SearchResultDTO, SeriesDTO } from "@shared/types";
+import type { LibraryDTO, MovieDTO, SearchResultDTO, SeriesDTO, SizeOption } from "@shared/types";
 import type { JellyfinItem, JellyfinVirtualFolder } from "../jellyfin/types";
+import { computeSizeOptions, estimateBitrateBps } from "../services/transcode.service";
 
 function posterUrl(itemId: string): string {
   return `/api/image/${itemId}`;
@@ -22,6 +23,17 @@ export function getFileSizeBytes(item: JellyfinItem): number | null {
 /** Raw video stream height in pixels — used both for the friendly label below and transcode skip-logic. */
 export function getVideoHeight(item: JellyfinItem): number | null {
   return item.MediaSources?.[0]?.MediaStreams?.find((stream) => stream.Type === "Video")?.Height ?? null;
+}
+
+/** Raw video stream width in pixels — paired with height to preserve the source's own aspect ratio when transcoding. */
+export function getVideoWidth(item: JellyfinItem): number | null {
+  return item.MediaSources?.[0]?.MediaStreams?.find((stream) => stream.Type === "Video")?.Width ?? null;
+}
+
+/** The transcode-quality options worth offering for this item — empty when it's already small enough that none would help. */
+export function getSizeOptions(item: JellyfinItem): SizeOption[] {
+  const sizeBytes = getFileSizeBytes(item);
+  return computeSizeOptions(sizeBytes, estimateBitrateBps(sizeBytes, item.RunTimeTicks), item.RunTimeTicks);
 }
 
 /** A friendly label ("1080p", "4K") derived from the video stream's height — not Jellyfin's raw stream data. */
@@ -60,6 +72,7 @@ export function mapMovie(item: JellyfinItem, userRequested = false): MovieDTO {
     resolution: getResolutionLabel(item),
     sizeBytes: getFileSizeBytes(item),
     watched: mapWatched(item, userRequested),
+    sizeOptions: getSizeOptions(item),
   };
 }
 
@@ -91,5 +104,6 @@ export function mapSearchResult(item: JellyfinItem): SearchResultDTO | null {
     posterUrl: posterUrl(item.Id),
     resolution: getResolutionLabel(item),
     sizeBytes: getFileSizeBytes(item),
+    sizeOptions: getSizeOptions(item),
   };
 }

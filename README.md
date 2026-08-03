@@ -2,10 +2,10 @@
 
 A lightweight download portal for [Jellyfin](https://jellyfin.org/). JellyDrop gives you a clean,
 Netflix-style interface for browsing your Jellyfin libraries and downloading media for offline use —
-no playback, just posters and a download button, with an optional quality selector if you want a
-smaller file. Logging in with a Jellyfin account is optional and only unlocks personalization
-(watched marks, recently watched, unwatched-only downloads) — see [Optional login](#optional-login)
-below.
+no playback, just posters and a download button, with optional Small/Medium/Large size-reduction
+options if you want a smaller file. Logging in with a Jellyfin account is optional and only unlocks
+personalization (watched marks, recently watched, unwatched-only downloads) — see
+[Optional login](#optional-login) below.
 
 Only playable media files are ever downloadable. `.nfo` files, artwork, subtitles, metadata, and
 filesystem paths are never exposed to the browser.
@@ -21,8 +21,8 @@ filesystem paths are never exposed to the browser.
   or as a single ZIP, all through the same download queue
 - Season/series ZIPs include a `folder.jpg` in each folder (from Jellyfin's own poster art), so the
   extracted files show up with cover art in Kodi, VLC, DLNA servers, and most file browsers
-- An optional quality selector (Original/1080p/720p/480p/360p) next to every download control —
-  see [Transcoding](#transcoding) below
+- Every download control offers up to three smaller-file-size options (Small/Medium/Large) picked
+  from the item's own estimated file size — see [Transcoding](#transcoding) below
 - Download buttons are always visible on posters, not hover-only, so they work on touchscreens
 - Site-wide search across movies and TV shows
 - A persistent, unified download queue (bottom-right): every item — active, failed, cancelled, or
@@ -46,7 +46,7 @@ JellyDrop is configured with environment variables only — there is no frontend
 | `PORT`             | Port JellyDrop listens on (default `8080`)                                        |
 | `AUTH_MODE`        | `open` (default) — login is optional; `required` — every page needs a login       |
 | `COOKIE_SECURE`    | `true`/`false` (default `false`). Set `true` when serving JellyDrop over HTTPS    |
-| `TRANSCODE_ENABLED`| `true`/`false` (default `true`). Set `false` to disable the quality selector entirely |
+| `TRANSCODE_ENABLED`| `true`/`false` (default `true`). Set `false` to disable the size-reduction options entirely |
 
 Copy `.env.example` to `.env` and fill in your values:
 
@@ -86,24 +86,39 @@ everyone out — just log back in.
 ## Transcoding
 
 Every download control (movie posters, episode rows, season/series downloads, and their ZIP
-equivalents) has a quality selector: **Original / 1080p / 720p / 480p / 360p**. Picking anything
-but Original asks your **Jellyfin server itself** to transcode the file down to that resolution —
-JellyDrop doesn't run its own ffmpeg or need any hardware access of its own. This keeps JellyDrop's
-Docker image exactly as small as it's always been, at the cost of the transcode's CPU/GPU load
-running on the Jellyfin server rather than JellyDrop's container (usually a non-issue, since they
-typically share the same host).
+equivalents) offers a main "Original" download plus, via an attached dropdown, up to three
+smaller-file-size options: **Small / Medium / Large**. Each option shows its own estimated file
+size (e.g. "~350 MB") rather than a resolution — sizing is based on file size, not pixel
+dimensions, so the same three tiers make sense for both a 22-minute episode and a two-hour movie.
+
+The three tiers target fixed encode bitrates (roughly 700 kbps / 1.2 Mbps / 2.5 Mbps for
+Small/Medium/Large), scaled by the item's own runtime to estimate a resulting file size. Encode
+height is derived from that bitrate and capped at the source's own height, so nothing is ever
+upscaled, and width is always computed from the **source file's own aspect ratio** — JellyDrop
+never assumes 16:9, so an unusual aspect ratio is preserved exactly.
+
+If a file is already efficiently encoded, JellyDrop won't offer a tier that would make it
+*bigger*: any tier whose target bitrate isn't actually lower than the source's own estimated
+bitrate is left out of the dropdown. If none of the three tiers would shrink the file, no dropdown
+is shown at all and the button reads "Already small" instead.
+
+Picking anything but Original asks your **Jellyfin server itself** to transcode the file — JellyDrop
+doesn't run its own ffmpeg or need any hardware access of its own. This keeps JellyDrop's Docker
+image exactly as small as it's always been, at the cost of the transcode's CPU/GPU load running on
+the Jellyfin server rather than JellyDrop's container (usually a non-issue, since they typically
+share the same host).
 
 Because of this, hardware-accelerated transcoding is entirely a function of your **Jellyfin
 server's own** Dashboard → Playback → Transcoding configuration — if Jellyfin has hardware
 acceleration set up there, JellyDrop's transcoded downloads use it automatically; if not, Jellyfin
 falls back to software encoding, same as it would for a client that can't direct-play.
 
-For a whole-season or whole-series ZIP with episodes of mixed resolutions, each episode is decided
-independently: one already at or below the target resolution (or already encoded at a low enough
-bitrate that transcoding wouldn't meaningfully shrink it) is added to the ZIP untouched, while only
-the episodes that actually exceed the target get transcoded.
+For a whole-season or whole-series ZIP with episodes of mixed bitrates, each episode is decided
+independently: one already at or below the target tier's bitrate is added to the ZIP untouched,
+while only the episodes that actually exceed the target get transcoded. The season/series size
+estimate shown in the UI reflects this per-episode mix, not a flat multiplier.
 
-Set `TRANSCODE_ENABLED=false` to remove the quality selector's effect entirely (every download is
+Set `TRANSCODE_ENABLED=false` to remove the size-reduction options entirely (every download is
 always served as-is, regardless of what quality a client requests).
 
 ## Running with Docker (recommended)
@@ -228,8 +243,8 @@ minute per library (`backend/src/utils/ttlCache.ts`) rather than recomputed on e
 | `GET /api/show/:id`             | A series' seasons, with episode counts                                                          |
 | `GET /api/season/:id`           | A season's episode list                                                                         |
 | `GET /api/search?q=`            | Search movies and series                                                                        |
-| `GET /api/download/movie/:id`   | Streams the movie's media file (`?quality=1080p\|720p\|480p\|360p` to transcode)                 |
-| `GET /api/download/episode/:id` | Streams the episode's media file (`?quality=1080p\|720p\|480p\|360p` to transcode)               |
+| `GET /api/download/movie/:id`   | Streams the movie's media file (`?quality=small\|medium\|large` to transcode)                    |
+| `GET /api/download/episode/:id` | Streams the episode's media file (`?quality=small\|medium\|large` to transcode)                  |
 | `GET /api/download/season/:id`  | Ordered download manifest for a season (`?unwatchedOnly=true` when logged in, `?quality=...`)    |
 | `GET /api/download/show/:id`    | Ordered download manifest for an entire series (`?unwatchedOnly=true` when logged in, `?quality=...`) |
 | `GET /api/download/season/:id/zip` | Streams a season as a single ZIP (`?unwatchedOnly=true`, `?quality=...`)                      |

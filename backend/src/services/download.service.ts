@@ -7,19 +7,34 @@ import { config } from "../config";
 import { jellyfinClient } from "../jellyfin/client";
 import type { JellyfinItem } from "../jellyfin/types";
 import { buildEpisodeFilename, buildMovieFilename, buildZipFilename } from "../utils/filename";
-import { hasMediaFile } from "../utils/mappers";
+import { getFileSizeBytes, getVideoHeight, getVideoWidth, hasMediaFile } from "../utils/mappers";
 import { pipeJellyfinResponse } from "../utils/stream";
-import { QUALITY_BITRATE_CEILING_BPS, decideTranscodeForItem } from "./transcode.service";
+import { decideTranscode, estimateBitrateBps, type TranscodeDecision } from "./transcode.service";
 import * as showsService from "./shows.service";
 
 /** Fields needed to both build a clean filename and decide whether to transcode. */
 const MOVIE_FIELDS = ["ProductionYear", "Container", "MediaSources", "RunTimeTicks"];
 const EPISODE_FIELDS = ["Container", "SeriesName", "ParentIndexNumber", "IndexNumber", "MediaSources", "RunTimeTicks"];
 
+const QUALITY_LABELS: Record<Exclude<TranscodeQuality, "original">, string> = {
+  small: "Small",
+  medium: "Medium",
+  large: "Large",
+};
+
 /** `quality` is coerced to "original" whenever transcoding is disabled server-side, regardless of what a route was asked for. */
 function effectiveQuality(quality: TranscodeQuality | undefined): TranscodeQuality {
   if (!config.transcodeEnabled) return "original";
   return quality ?? "original";
+}
+
+function decideTranscodeForItem(item: JellyfinItem, quality: TranscodeQuality): TranscodeDecision {
+  return decideTranscode({
+    quality,
+    sourceWidthPx: getVideoWidth(item),
+    sourceHeightPx: getVideoHeight(item),
+    sourceBitrateBps: estimateBitrateBps(getFileSizeBytes(item), item.RunTimeTicks),
+  });
 }
 
 export async function streamMovie(
@@ -43,12 +58,8 @@ export async function streamMovie(
     return true;
   }
 
-  const filename = buildMovieFilename(item.Name, item.ProductionYear ?? null, "mkv", quality);
-  const jfRes = await jellyfinClient.streamTranscodedProxy(
-    movieId,
-    decision.targetHeight!,
-    QUALITY_BITRATE_CEILING_BPS[quality as keyof typeof QUALITY_BITRATE_CEILING_BPS]
-  );
+  const filename = buildMovieFilename(item.Name, item.ProductionYear ?? null, "mkv", QUALITY_LABELS[quality as keyof typeof QUALITY_LABELS]);
+  const jfRes = await jellyfinClient.streamTranscodedProxy(movieId, decision.targetWidth!, decision.targetHeight!, decision.bitrateBps!);
   pipeJellyfinResponse(res, jfRes, { filename, transcoded: true });
   return true;
 }
@@ -73,12 +84,11 @@ export async function streamEpisode(
     return true;
   }
 
-  const jfRes = await jellyfinClient.streamTranscodedProxy(
-    episodeId,
-    decision.targetHeight!,
-    QUALITY_BITRATE_CEILING_BPS[quality as keyof typeof QUALITY_BITRATE_CEILING_BPS]
-  );
-  pipeJellyfinResponse(res, jfRes, { filename: episodeFilename(item, "mkv", quality), transcoded: true });
+  const jfRes = await jellyfinClient.streamTranscodedProxy(episodeId, decision.targetWidth!, decision.targetHeight!, decision.bitrateBps!);
+  pipeJellyfinResponse(res, jfRes, {
+    filename: episodeFilename(item, "mkv", QUALITY_LABELS[quality as keyof typeof QUALITY_LABELS]),
+    transcoded: true,
+  });
   return true;
 }
 
@@ -124,6 +134,13 @@ function seasonFolderName(seasonNumber: number): string {
   return `Season ${String(seasonNumber).padStart(2, "0")}`;
 }
 
+/** Holds whichever per-episode upstream stream is currently being read, so the caller can cancel
+ *  it directly the instant the client disconnects — see appendAndDrain for why this can't just
+ *  rely on archive.destroy() alone. */
+interface CurrentStreamRef {
+  current: Readable | null;
+}
+
 /**
  * Appends one Jellyfin stream to the archive and waits for it to be fully drained before
  * resolving — this is what actually keeps the zip loop to one episode at a time.
@@ -139,18 +156,28 @@ function seasonFolderName(seasonNumber: number): string {
  * slots/resources partway through a long zip and kills an earlier, still-draining connection —
  * which is why an error can surface against an episode from much earlier in the sequence.
  *
+ * `ref` records the stream currently being read so a client disconnect (see the res 'close'/'error'
+ * handlers below) can `.destroy()` it directly — that's what actually cancels the in-flight fetch
+ * to Jellyfin (destroying a `Readable.fromWeb()` stream cancels the underlying web stream, which
+ * aborts the fetch it came from), telling Jellyfin to stop transcoding instead of leaving it
+ * running for a client that's no longer there. Relying only on `archive.destroy()` isn't enough:
+ * archiver tearing itself down doesn't guarantee it also destroys whatever input stream it happens
+ * to be mid-read on.
+ *
  * Also carries the per-stream 'error' listener Node requires (an unlistened 'error' event on any
  * stream is fatal and crashes the whole process) — a hiccup on Jellyfin's own side, not just the
  * client disconnecting, surfaces here, same as `pipeJellyfinResponse` already guards for
  * single-file downloads.
  */
-function appendAndDrain(archive: ZipArchive, body: WebReadableStream, name: string, context: string): Promise<void> {
+function appendAndDrain(archive: ZipArchive, body: WebReadableStream, name: string, context: string, ref: CurrentStreamRef): Promise<void> {
   return new Promise((resolve) => {
     const stream = Readable.fromWeb(body);
+    ref.current = stream;
     let settled = false;
     const settle = () => {
       if (settled) return;
       settled = true;
+      if (ref.current === stream) ref.current = null;
       resolve();
     };
     stream.on("error", (err) => {
@@ -158,6 +185,10 @@ function appendAndDrain(archive: ZipArchive, body: WebReadableStream, name: stri
       settle();
     });
     stream.on("end", settle);
+    // Covers a plain `.destroy()` with no error (the client-disconnect path above) — that fires
+    // neither 'end' nor 'error', so without this the loop would just hang forever waiting on a
+    // stream that's already gone instead of noticing clientGone and returning.
+    stream.on("close", settle);
     archive.append(stream, { name, store: true });
   });
 }
@@ -177,7 +208,7 @@ function toManifestItem(episode: JellyfinItem, quality: TranscodeQuality): Downl
   }
   return {
     id: `${episode.Id}::${quality}`,
-    name: episodeFilename(episode, "mkv", quality),
+    name: episodeFilename(episode, "mkv", QUALITY_LABELS[quality as keyof typeof QUALITY_LABELS]),
     downloadUrl: `/api/download/episode/${episode.Id}?quality=${quality}`,
   };
 }
@@ -261,6 +292,7 @@ async function streamEpisodesAsZip(
   // 'error' handler below isn't optional defensive dressing, it's what keeps one stalled client
   // from crashing the server for everyone else.
   let clientGone = false;
+  const currentStream: CurrentStreamRef = { current: null };
   archive.on("warning", (err: Error) => console.error("[download] zip archive warning:", err.message));
   archive.on("error", (err: Error) => {
     console.error("[download] zip archive error:", err.message);
@@ -272,11 +304,16 @@ async function streamEpisodesAsZip(
   });
   res.on("close", () => {
     clientGone = true;
+    // Cancels whichever episode is currently transcoding/streaming, not just our own side of it —
+    // destroying this stream cancels the fetch it came from, which tells Jellyfin the client is
+    // gone so it can stop that transcode instead of continuing to burn CPU for no one.
+    currentStream.current?.destroy();
     if (!archive.destroyed) archive.destroy();
   });
   res.on("error", (err: Error) => {
     console.error("[download] zip response stream error:", err.message);
     clientGone = true;
+    currentStream.current?.destroy();
     if (!archive.destroyed) archive.destroy();
   });
 
@@ -286,7 +323,7 @@ async function streamEpisodesAsZip(
     if (clientGone) return;
     const jfRes = await jellyfinClient.streamProxy(`/Items/${itemId}/Images/Primary`);
     if (!jfRes.ok || !jfRes.body) continue;
-    await appendAndDrain(archive, jfRes.body as unknown as WebReadableStream, entryPath, entryPath);
+    await appendAndDrain(archive, jfRes.body as unknown as WebReadableStream, entryPath, entryPath, currentStream);
   }
 
   for (const [index, episode] of episodes.entries()) {
@@ -302,15 +339,11 @@ async function streamEpisodesAsZip(
         console.error(`[download] skipping "${episode.Name}" (${sequence.index} of ${sequence.total}) in zip: upstream status ${jfRes.status}`);
         continue;
       }
-      await appendAndDrain(archive, jfRes.body as unknown as WebReadableStream, entryName, episode.Name);
+      await appendAndDrain(archive, jfRes.body as unknown as WebReadableStream, entryName, episode.Name, currentStream);
       continue;
     }
 
-    const jfRes = await jellyfinClient.streamTranscodedProxy(
-      episode.Id,
-      decision.targetHeight!,
-      QUALITY_BITRATE_CEILING_BPS[options.quality as keyof typeof QUALITY_BITRATE_CEILING_BPS]
-    );
+    const jfRes = await jellyfinClient.streamTranscodedProxy(episode.Id, decision.targetWidth!, decision.targetHeight!, decision.bitrateBps!);
     if (!jfRes.ok || !jfRes.body) {
       console.error(`[download] skipping "${episode.Name}" (${sequence.index} of ${sequence.total}) in zip: transcode status ${jfRes.status}`);
       continue;
@@ -318,12 +351,14 @@ async function streamEpisodesAsZip(
     await appendAndDrain(
       archive,
       jfRes.body as unknown as WebReadableStream,
-      entryName.replace(/\.\w+$/, ` (Transcoded ${options.quality}).mkv`),
-      episode.Name
+      entryName.replace(/\.\w+$/, ` (Transcoded ${QUALITY_LABELS[options.quality as keyof typeof QUALITY_LABELS]}).mkv`),
+      episode.Name,
+      currentStream
     );
   }
 
   await archive.finalize();
+  if (!clientGone) console.log(`Zip complete: ${zipFilename} (${episodes.length} episodes)`);
 }
 
 export async function streamSeasonZip(

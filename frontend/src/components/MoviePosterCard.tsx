@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { TranscodeQuality } from "@shared/types";
+import type { SizeOption, TranscodeQuality } from "@shared/types";
 import { movieDownloadUrl, queueId } from "../api/client";
 import { useDownloadQueue } from "../context/DownloadQueueContext";
 import { formatBytes } from "../utils/format";
@@ -15,6 +15,7 @@ interface MoviePosterCardProps {
   /** Omit entirely on pages that don't otherwise have this data (rare — see search.service.ts). */
   resolution?: string | null;
   sizeBytes?: number | null;
+  sizeOptions: SizeOption[];
   /** Omit entirely on pages that don't otherwise show watched status (e.g. library browsing, search). */
   watched?: boolean | null;
   /** DOM id for the alphabet jump nav's scroll target — only Movies.tsx uses this. */
@@ -33,7 +34,7 @@ function cornerLabel(resolution?: string | null, sizeBytes?: number | null): Rea
 }
 
 /** A movie poster with a split download button (quality dropdown attached) and a resolution/size corner label. */
-export function MoviePosterCard({ id, name, year, posterUrl, resolution, sizeBytes, watched, jumpId }: MoviePosterCardProps) {
+export function MoviePosterCard({ id, name, year, posterUrl, resolution, sizeBytes, sizeOptions, watched, jumpId }: MoviePosterCardProps) {
   const { enqueue } = useDownloadQueue();
 
   function handleDownload(quality: TranscodeQuality) {
@@ -49,7 +50,7 @@ export function MoviePosterCard({ id, name, year, posterUrl, resolution, sizeByt
       subtitle={year ? String(year) : undefined}
       badge={watched ? <WatchedBadge /> : undefined}
       cornerLabel={cornerLabel(resolution, sizeBytes)}
-      action={<DownloadButton onDownload={handleDownload} />}
+      action={<DownloadButton onDownload={handleDownload} sizeOptions={sizeOptions} />}
     />
   );
 }

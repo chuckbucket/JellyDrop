@@ -15,7 +15,9 @@ export interface GetMoviesOptions {
 
 export async function getMovies(options: GetMoviesOptions): Promise<PagedResult<MovieDTO>> {
   const { libraryId, ids, startIndex = 0, limit = 100, userId } = options;
-  const fields = userId ? "ProductionYear,Container,Overview,MediaSources,UserData" : "ProductionYear,Container,Overview,MediaSources";
+  const fields = userId
+    ? "ProductionYear,Container,Overview,MediaSources,RunTimeTicks,UserData"
+    : "ProductionYear,Container,Overview,MediaSources,RunTimeTicks";
 
   // The ids lookup (movie detail page) isn't a paginated listing — just filter what came back.
   if (ids) {

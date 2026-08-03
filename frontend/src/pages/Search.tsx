@@ -78,6 +78,7 @@ export function Search({ query, onQueryChange, result, onResultChange }: SearchP
                 posterUrl={item.posterUrl}
                 resolution={item.resolution}
                 sizeBytes={item.sizeBytes}
+                sizeOptions={item.sizeOptions}
               />
             ))}
           </PosterGrid>
