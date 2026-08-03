@@ -125,19 +125,41 @@ function seasonFolderName(seasonNumber: number): string {
 }
 
 /**
- * `Readable.fromWeb()` streams handed to `archive.append()` need their own 'error' listener —
- * Node treats an unlistened 'error' event on *any* stream as fatal (it throws and crashes the
- * whole process), same as the outbound response stream already guarded above. This is a different
- * failure than a client disconnecting though: a hiccup on Jellyfin's *own* side mid-transfer (its
- * transcode process erroring, a network blip between JellyDrop and Jellyfin) surfaces as an error
- * on this inbound stream, not on `res`, and `pipeJellyfinResponse` (used for single-file downloads)
- * already listens for exactly this on its own source stream — this is that same protection for the
- * per-episode streams built up while assembling a ZIP.
+ * Appends one Jellyfin stream to the archive and waits for it to be fully drained before
+ * resolving — this is what actually keeps the zip loop to one episode at a time.
+ *
+ * Without this wait, the calling loop's `await` only covers the initial `fetch()` (i.e. Jellyfin
+ * sending response headers, which for a live transcode happens almost immediately since ffmpeg
+ * streams as it encodes) and then races ahead to request the *next* episode's transcode before
+ * archiver has read a single byte of this one. Jellyfin dutifully spins up a real, separate ffmpeg
+ * job per request regardless of whether anything is reading its output — so a 91-episode zip could
+ * end up with dozens of simultaneous live transcodes piling up on the Jellyfin server (archiver can
+ * only actively drain one at a time), even though only one episode's worth of work is actually
+ * needed at once. That pile-up is almost certainly what exhausts Jellyfin's transcode
+ * slots/resources partway through a long zip and kills an earlier, still-draining connection —
+ * which is why an error can surface against an episode from much earlier in the sequence.
+ *
+ * Also carries the per-stream 'error' listener Node requires (an unlistened 'error' event on any
+ * stream is fatal and crashes the whole process) — a hiccup on Jellyfin's own side, not just the
+ * client disconnecting, surfaces here, same as `pipeJellyfinResponse` already guards for
+ * single-file downloads.
  */
-function toSafeNodeStream(body: WebReadableStream, context: string): Readable {
-  const stream = Readable.fromWeb(body);
-  stream.on("error", (err) => console.error(`[download] upstream stream error ("${context}"):`, err.message));
-  return stream;
+function appendAndDrain(archive: ZipArchive, body: WebReadableStream, name: string, context: string): Promise<void> {
+  return new Promise((resolve) => {
+    const stream = Readable.fromWeb(body);
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    stream.on("error", (err) => {
+      console.error(`[download] upstream stream error ("${context}"):`, err.message);
+      settle();
+    });
+    stream.on("end", settle);
+    archive.append(stream, { name, store: true });
+  });
 }
 
 /**
@@ -264,7 +286,7 @@ async function streamEpisodesAsZip(
     if (clientGone) return;
     const jfRes = await jellyfinClient.streamProxy(`/Items/${itemId}/Images/Primary`);
     if (!jfRes.ok || !jfRes.body) continue;
-    archive.append(toSafeNodeStream(jfRes.body as unknown as WebReadableStream, entryPath), { name: entryPath, store: true });
+    await appendAndDrain(archive, jfRes.body as unknown as WebReadableStream, entryPath, entryPath);
   }
 
   for (const [index, episode] of episodes.entries()) {
@@ -280,7 +302,7 @@ async function streamEpisodesAsZip(
         console.error(`[download] skipping "${episode.Name}" (${sequence.index} of ${sequence.total}) in zip: upstream status ${jfRes.status}`);
         continue;
       }
-      archive.append(toSafeNodeStream(jfRes.body as unknown as WebReadableStream, episode.Name), { name: entryName, store: true });
+      await appendAndDrain(archive, jfRes.body as unknown as WebReadableStream, entryName, episode.Name);
       continue;
     }
 
@@ -293,10 +315,12 @@ async function streamEpisodesAsZip(
       console.error(`[download] skipping "${episode.Name}" (${sequence.index} of ${sequence.total}) in zip: transcode status ${jfRes.status}`);
       continue;
     }
-    archive.append(toSafeNodeStream(jfRes.body as unknown as WebReadableStream, episode.Name), {
-      name: entryName.replace(/\.\w+$/, ` (Transcoded ${options.quality}).mkv`),
-      store: true,
-    });
+    await appendAndDrain(
+      archive,
+      jfRes.body as unknown as WebReadableStream,
+      entryName.replace(/\.\w+$/, ` (Transcoded ${options.quality}).mkv`),
+      episode.Name
+    );
   }
 
   await archive.finalize();

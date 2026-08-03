@@ -22,6 +22,9 @@ vi.mock("archiver", () => {
     }
     append(stream: unknown, opts: { name: string }) {
       this.appended.push({ name: opts.name, stream });
+      // The real archiver actively drains whatever's appended — mirror that so appendAndDrain()'s
+      // wait-for-'end' promise actually resolves in tests instead of hanging forever.
+      (stream as Readable | undefined)?.resume();
     }
     async finalize() {}
     destroy() {
@@ -184,6 +187,34 @@ describe("streamSeasonZip", () => {
 
     const archive = createdArchives.at(-1)!;
     expect(archive.appended.map((entry) => entry.name)).toEqual(["folder.jpg", "Test Show - S01E00 - e1.mkv"]);
+  });
+
+  it("waits for one episode's stream to fully drain before requesting the next one (regression: racing ahead used to pile up dozens of simultaneous live transcodes on Jellyfin, eventually killing an earlier connection)", async () => {
+    vi.mocked(jellyfinClient.getItemsByIds).mockResolvedValueOnce([
+      { Id: "season-1", Name: "Season 1", Type: "Season", SeriesName: "Test Show", IndexNumber: 1 },
+    ]);
+    vi.mocked(showsService.getSeasonEpisodesForDownload).mockResolvedValueOnce([episode("e1", undefined, 1), episode("e2", undefined, 1)]);
+
+    let controller1!: ReadableStreamDefaultController<Uint8Array>;
+    const stream1 = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller1 = c;
+      },
+    });
+    vi.mocked(jellyfinClient.streamProxy)
+      .mockImplementationOnce(async () => ({ ok: true, body: freshStream() }) as unknown as Response) // folder.jpg
+      .mockImplementationOnce(async () => ({ ok: true, body: stream1 }) as unknown as Response); // e1 — held open
+
+    const donePromise = streamSeasonZip(fakeResponse(), "season-1");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // e1's stream is still open — e2 must not have been requested yet.
+    expect(jellyfinClient.streamProxy).toHaveBeenCalledTimes(2);
+
+    controller1.close();
+    await donePromise;
+
+    expect(jellyfinClient.streamProxy).toHaveBeenCalledTimes(3);
   });
 
   it("attaches an error listener to each per-episode stream before handing it to the archive (regression: an unhandled 'error' from a Jellyfin-side hiccup, not just a disconnecting client, used to crash the process)", async () => {
