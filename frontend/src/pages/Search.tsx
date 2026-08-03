@@ -8,28 +8,46 @@ import { PosterGrid } from "../components/PosterGrid";
 
 const DEBOUNCE_MS = 300;
 
-export function Search() {
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<SearchResultDTO[] | null>(null);
+/** `forQuery` records which query these `items` actually answer, so a remounted Search page (e.g.
+ *  after navigating to a result and hitting back) can tell its restored results are still fresh
+ *  for the restored query, instead of needing to refetch. */
+export interface SearchResult {
+  forQuery: string;
+  items: SearchResultDTO[];
+}
+
+interface SearchProps {
+  query: string;
+  onQueryChange: (query: string) => void;
+  result: SearchResult | null;
+  onResultChange: (result: SearchResult | null) => void;
+}
+
+export function Search({ query, onQueryChange, result, onResultChange }: SearchProps) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const trimmed = query.trim();
+    if (result?.forQuery === trimmed) return; // already have fresh results for this exact query — e.g. just remounted via browser back
     if (!trimmed) {
-      setResults(null);
+      onResultChange(null);
       return;
     }
     setLoading(true);
     const handle = setTimeout(() => {
       search(trimmed)
-        .then(setResults)
+        .then((items) => onResultChange({ forQuery: trimmed, items }))
         .finally(() => setLoading(false));
     }, DEBOUNCE_MS);
     return () => clearTimeout(handle);
+    // Only a `query` change should ever trigger a new search — `result`/`onResultChange` come from
+    // the parent purely to read/restore state, not to drive this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
-  const movies = results?.filter((result) => result.type === "movie") ?? [];
-  const series = results?.filter((result) => result.type === "series") ?? [];
+  const results = result?.items ?? null;
+  const movies = results?.filter((item) => item.type === "movie") ?? [];
+  const series = results?.filter((item) => item.type === "series") ?? [];
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
@@ -37,7 +55,7 @@ export function Search() {
       <input
         type="search"
         value={query}
-        onChange={(event) => setQuery(event.target.value)}
+        onChange={(event) => onQueryChange(event.target.value)}
         placeholder="Search movies and TV shows…"
         autoFocus
         className="mb-8 w-full rounded-lg border border-neutral-800 bg-[var(--color-jelly-surface)] px-4 py-2.5 text-neutral-100 placeholder-neutral-500 outline-none focus:border-[var(--color-jelly-accent)]"
@@ -51,8 +69,16 @@ export function Search() {
         <section className="mb-10">
           <h2 className="mb-3 text-xl font-semibold">Movies</h2>
           <PosterGrid>
-            {movies.map((result) => (
-              <MoviePosterCard key={result.id} id={result.id} name={result.name} year={result.year} posterUrl={result.posterUrl} />
+            {movies.map((item) => (
+              <MoviePosterCard
+                key={item.id}
+                id={item.id}
+                name={item.name}
+                year={item.year}
+                posterUrl={item.posterUrl}
+                resolution={item.resolution}
+                sizeBytes={item.sizeBytes}
+              />
             ))}
           </PosterGrid>
         </section>
@@ -62,13 +88,13 @@ export function Search() {
         <section>
           <h2 className="mb-3 text-xl font-semibold">TV Series</h2>
           <PosterGrid>
-            {series.map((result) => (
+            {series.map((item) => (
               <PosterCard
-                key={result.id}
-                to={`/shows/${result.id}`}
-                posterUrl={result.posterUrl}
-                title={result.name}
-                subtitle={result.year ? String(result.year) : undefined}
+                key={item.id}
+                to={`/shows/${item.id}`}
+                posterUrl={item.posterUrl}
+                title={item.name}
+                subtitle={item.year ? String(item.year) : undefined}
               />
             ))}
           </PosterGrid>

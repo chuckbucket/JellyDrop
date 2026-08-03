@@ -12,9 +12,15 @@ function primaryExtension(container: string): string {
   return container.split(",")[0].trim();
 }
 
-export function buildMovieFilename(name: string, year: number | null, container: string): string {
+/** Appended to a filename's base (before the extension) when the file was actually transcoded, so
+ *  a saved file is self-descriptive about not being the original — e.g. "Movie (2020) (Transcoded 720p).mkv". */
+function withTranscodedSuffix(base: string, transcodedQuality?: string): string {
+  return transcodedQuality ? `${base} (Transcoded ${transcodedQuality})` : base;
+}
+
+export function buildMovieFilename(name: string, year: number | null, container: string, transcodedQuality?: string): string {
   const base = year ? `${name} (${year})` : name;
-  return `${sanitizeFilenameComponent(base)}.${primaryExtension(container)}`;
+  return `${sanitizeFilenameComponent(withTranscodedSuffix(base, transcodedQuality))}.${primaryExtension(container)}`;
 }
 
 export function buildZipFilename(name: string): string {
@@ -26,10 +32,11 @@ export function buildEpisodeFilename(
   seasonNumber: number | null,
   episodeNumber: number | null,
   episodeName: string,
-  container: string
+  container: string,
+  transcodedQuality?: string
 ): string {
   const season = seasonNumber !== null ? String(seasonNumber).padStart(2, "0") : "00";
   const episode = episodeNumber !== null ? String(episodeNumber).padStart(2, "0") : "00";
   const base = `${seriesName} - S${season}E${episode} - ${episodeName}`;
-  return `${sanitizeFilenameComponent(base)}.${primaryExtension(container)}`;
+  return `${sanitizeFilenameComponent(withTranscodedSuffix(base, transcodedQuality))}.${primaryExtension(container)}`;
 }

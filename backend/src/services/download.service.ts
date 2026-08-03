@@ -32,7 +32,9 @@ export async function streamMovie(
   if (!item || !hasMediaFile(item)) return false;
 
   console.log(`Downloading movie: ${item.Name}${item.ProductionYear ? ` (${item.ProductionYear})` : ""}`);
-  const decision = decideTranscodeForItem(item, effectiveQuality(options.quality));
+  const quality = effectiveQuality(options.quality);
+  const decision = decideTranscodeForItem(item, quality);
+  logTranscodeDecision(item.Name, quality, decision);
 
   if (!decision.shouldTranscode) {
     const filename = buildMovieFilename(item.Name, item.ProductionYear ?? null, item.Container ?? "mkv");
@@ -41,11 +43,11 @@ export async function streamMovie(
     return true;
   }
 
-  const filename = buildMovieFilename(item.Name, item.ProductionYear ?? null, "mkv");
+  const filename = buildMovieFilename(item.Name, item.ProductionYear ?? null, "mkv", quality);
   const jfRes = await jellyfinClient.streamTranscodedProxy(
     movieId,
     decision.targetHeight!,
-    QUALITY_BITRATE_CEILING_BPS[effectiveQuality(options.quality) as keyof typeof QUALITY_BITRATE_CEILING_BPS]
+    QUALITY_BITRATE_CEILING_BPS[quality as keyof typeof QUALITY_BITRATE_CEILING_BPS]
   );
   pipeJellyfinResponse(res, jfRes, { filename, transcoded: true });
   return true;
@@ -61,7 +63,9 @@ export async function streamEpisode(
   if (!item || !hasMediaFile(item)) return false;
 
   console.log(`Downloading TV series episode: ${item.SeriesName ?? "Series"} ${episodeCode(item)} - ${item.Name}`);
-  const decision = decideTranscodeForItem(item, effectiveQuality(options.quality));
+  const quality = effectiveQuality(options.quality);
+  const decision = decideTranscodeForItem(item, quality);
+  logTranscodeDecision(item.Name, quality, decision);
 
   if (!decision.shouldTranscode) {
     const jfRes = await jellyfinClient.streamProxy(`/Items/${episodeId}/Download`, options.range);
@@ -72,9 +76,9 @@ export async function streamEpisode(
   const jfRes = await jellyfinClient.streamTranscodedProxy(
     episodeId,
     decision.targetHeight!,
-    QUALITY_BITRATE_CEILING_BPS[effectiveQuality(options.quality) as keyof typeof QUALITY_BITRATE_CEILING_BPS]
+    QUALITY_BITRATE_CEILING_BPS[quality as keyof typeof QUALITY_BITRATE_CEILING_BPS]
   );
-  pipeJellyfinResponse(res, jfRes, { filename: episodeFilename(item, "mkv"), transcoded: true });
+  pipeJellyfinResponse(res, jfRes, { filename: episodeFilename(item, "mkv", quality), transcoded: true });
   return true;
 }
 
@@ -84,14 +88,26 @@ function episodeCode(episode: JellyfinItem): string {
   return `S${season}E${number}`;
 }
 
-function episodeFilename(episode: JellyfinItem, containerOverride?: string): string {
+function episodeFilename(episode: JellyfinItem, containerOverride?: string, transcodedQuality?: string): string {
   return buildEpisodeFilename(
     episode.SeriesName ?? "Series",
     episode.ParentIndexNumber ?? null,
     episode.IndexNumber ?? null,
     episode.Name,
-    containerOverride ?? episode.Container ?? "mkv"
+    containerOverride ?? episode.Container ?? "mkv",
+    transcodedQuality
   );
+}
+
+/** Logs whether a transcode is actually happening for this request, and why — including the skip
+ *  case (already small/low-res enough), so "why didn't this get smaller" is answerable from logs alone. */
+function logTranscodeDecision(name: string, quality: TranscodeQuality, decision: { shouldTranscode: boolean; reason: string }): void {
+  if (quality === "original") return;
+  if (decision.shouldTranscode) {
+    console.log(`[transcode] "${name}": transcoding to ${quality} (${decision.reason})`);
+  } else {
+    console.log(`[transcode] "${name}": skipping transcode to ${quality} — ${decision.reason}`);
+  }
 }
 
 /** Matches the "Season 01" labeling already used for season-zip filenames, so a full-series zip's
@@ -115,7 +131,7 @@ function toManifestItem(episode: JellyfinItem, quality: TranscodeQuality): Downl
   }
   return {
     id: `${episode.Id}::${quality}`,
-    name: episodeFilename(episode, "mkv"),
+    name: episodeFilename(episode, "mkv", quality),
     downloadUrl: `/api/download/episode/${episode.Id}?quality=${quality}`,
   };
 }
@@ -215,6 +231,7 @@ async function streamEpisodesAsZip(
 
   for (const episode of episodes) {
     const decision = decideTranscodeForItem(episode, options.quality);
+    logTranscodeDecision(episode.Name, options.quality, decision);
     const entryName = buildEntryName(episode);
 
     if (!decision.shouldTranscode) {
@@ -237,7 +254,7 @@ async function streamEpisodesAsZip(
       continue;
     }
     archive.append(Readable.fromWeb(jfRes.body as unknown as WebReadableStream), {
-      name: entryName.replace(/\.\w+$/, ".mkv"),
+      name: entryName.replace(/\.\w+$/, ` (Transcoded ${options.quality}).mkv`),
       store: true,
     });
   }

@@ -89,5 +89,7 @@ export function mapSearchResult(item: JellyfinItem): SearchResultDTO | null {
     name: item.Name,
     year: item.ProductionYear ?? null,
     posterUrl: posterUrl(item.Id),
+    resolution: getResolutionLabel(item),
+    sizeBytes: getFileSizeBytes(item),
   };
 }

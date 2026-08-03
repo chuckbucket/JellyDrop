@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { ShowDetailDTO, TranscodeQuality } from "@shared/types";
 import { getShow, getShowManifest, queueId, showZipUrl } from "../api/client";
+import { DownloadButton } from "../components/DownloadButton";
 import { ErrorState } from "../components/ErrorState";
 import { LoadingSpinner } from "../components/LoadingSpinner";
-import { QualitySelect } from "../components/QualitySelect";
 import { SeasonRow } from "../components/SeasonRow";
 import { useAuth } from "../context/AuthContext";
 import { useDownloadQueue } from "../context/DownloadQueueContext";
@@ -17,7 +17,6 @@ export function ShowDetail() {
   const [error, setError] = useState<string | null>(null);
   const [queuingAll, setQueuingAll] = useState(false);
   const [unwatchedOnly, setUnwatchedOnly] = useState(false);
-  const [quality, setQuality] = useState<TranscodeQuality>("original");
   const { enqueue } = useDownloadQueue();
 
   useEffect(() => {
@@ -27,7 +26,7 @@ export function ShowDetail() {
       .catch((err: Error) => setError(err.message));
   }, [id]);
 
-  async function handleDownloadSeries() {
+  async function handleDownloadSeries(quality: TranscodeQuality) {
     if (!id) return;
     setQueuingAll(true);
     try {
@@ -40,7 +39,7 @@ export function ShowDetail() {
 
   // Routed through the same queue as everything else (rather than a plain <a download>) so it
   // shows up with progress/history like any other item.
-  function handleDownloadZip() {
+  function handleDownloadZip(quality: TranscodeQuality) {
     if (!show) return;
     enqueue([
       { id: queueId(show.id, quality), name: `${show.name} (ZIP)`, downloadUrl: showZipUrl(show.id, unwatchedOnly, quality) },
@@ -79,23 +78,13 @@ export function ShowDetail() {
               Unwatched only
             </label>
           )}
-          <QualitySelect value={quality} onChange={setQuality} className="w-fit" />
           <div className="flex w-fit flex-col gap-2 sm:flex-row">
-            <button
-              type="button"
-              onClick={handleDownloadSeries}
+            <DownloadButton
+              label={queuingAll ? "Queuing…" : "Download Entire Series"}
               disabled={queuingAll}
-              className="rounded-md bg-[var(--color-jelly-accent)] px-4 py-2 font-semibold text-white transition-colors hover:bg-[var(--color-jelly-accent-hover)] disabled:opacity-50"
-            >
-              {queuingAll ? "Queuing…" : "Download Entire Series"}
-            </button>
-            <button
-              type="button"
-              onClick={handleDownloadZip}
-              className="rounded-md border border-neutral-700 px-4 py-2 text-center font-semibold text-neutral-200 transition-colors hover:bg-neutral-800"
-            >
-              Download as ZIP
-            </button>
+              onDownload={handleDownloadSeries}
+            />
+            <DownloadButton label="Download as ZIP" variant="secondary" onDownload={handleDownloadZip} />
           </div>
         </div>
       </div>

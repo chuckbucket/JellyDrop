@@ -185,7 +185,7 @@ describe("streamSeasonZip", () => {
     expect(archive.appended.map((entry) => entry.name)).toEqual([
       "folder.jpg",
       "Test Show - S01E00 - small.mkv",
-      "Test Show - S01E00 - big.mkv",
+      "Test Show - S01E00 - big (Transcoded 480p).mkv",
     ]);
   });
 });
@@ -217,7 +217,7 @@ describe("streamMovie", () => {
     expect(jellyfinClient.streamTranscodedProxy).toHaveBeenCalledWith("movie-1", 720, 2_500_000);
     expect(jellyfinClient.streamProxy).not.toHaveBeenCalled();
     expect(vi.mocked(pipeJellyfinResponse).mock.calls[0][2]).toMatchObject({
-      filename: "A Movie (2020).mkv",
+      filename: "A Movie (2020) (Transcoded 720p).mkv",
       transcoded: true,
     });
   });

@@ -17,6 +17,10 @@ describe("buildMovieFilename", () => {
   it("uses only the first of multiple reported containers", () => {
     expect(buildMovieFilename("Movie", 2020, "mkv,webm")).toBe("Movie (2020).mkv");
   });
+
+  it("adds a 'Transcoded' suffix when a quality is given", () => {
+    expect(buildMovieFilename("Movie", 2020, "mkv", "720p")).toBe("Movie (2020) (Transcoded 720p).mkv");
+  });
 });
 
 describe("buildEpisodeFilename", () => {
@@ -26,6 +30,10 @@ describe("buildEpisodeFilename", () => {
 
   it("falls back to 00 for missing season/episode numbers", () => {
     expect(buildEpisodeFilename("Show", null, null, "Special", "mp4")).toBe("Show - S00E00 - Special.mp4");
+  });
+
+  it("adds a 'Transcoded' suffix when a quality is given", () => {
+    expect(buildEpisodeFilename("Show", 1, 2, "Pilot", "mp4", "480p")).toBe("Show - S01E02 - Pilot (Transcoded 480p).mp4");
   });
 });
 

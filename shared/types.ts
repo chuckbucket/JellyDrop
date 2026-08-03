@@ -97,6 +97,9 @@ export interface SearchResultDTO {
   name: string;
   year: number | null;
   posterUrl: string;
+  /** Only ever populated for movies — series don't carry a media file/resolution of their own. */
+  resolution: string | null;
+  sizeBytes: number | null;
 }
 
 export interface DownloadManifestItem {

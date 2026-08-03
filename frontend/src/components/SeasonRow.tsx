@@ -5,7 +5,7 @@ import { getSeasonManifest, queueId, seasonZipUrl } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useDownloadQueue } from "../context/DownloadQueueContext";
 import { formatBytes } from "../utils/format";
-import { QualitySelect } from "./QualitySelect";
+import { DownloadButton } from "./DownloadButton";
 
 interface SeasonRowProps {
   seriesId: string;
@@ -17,9 +17,8 @@ export function SeasonRow({ seriesId, season }: SeasonRowProps) {
   const { enqueue } = useDownloadQueue();
   const [queuing, setQueuing] = useState(false);
   const [unwatchedOnly, setUnwatchedOnly] = useState(false);
-  const [quality, setQuality] = useState<TranscodeQuality>("original");
 
-  async function handleDownloadSeason() {
+  async function handleDownloadSeason(quality: TranscodeQuality) {
     setQueuing(true);
     try {
       const manifest = await getSeasonManifest(season.id, unwatchedOnly, quality);
@@ -32,7 +31,7 @@ export function SeasonRow({ seriesId, season }: SeasonRowProps) {
   // Routed through the same queue as everything else (rather than a plain <a download>) so it
   // shows up with progress/history like any other item — the actual saved filename still comes
   // from the server's Content-Disposition on the zip response, this is just the queue's display label.
-  function handleDownloadZip() {
+  function handleDownloadZip(quality: TranscodeQuality) {
     enqueue([
       { id: queueId(season.id, quality), name: `${season.name} (ZIP)`, downloadUrl: seasonZipUrl(season.id, unwatchedOnly, quality) },
     ]);
@@ -69,23 +68,9 @@ export function SeasonRow({ seriesId, season }: SeasonRowProps) {
             Unwatched only
           </label>
         )}
-        <QualitySelect value={quality} onChange={setQuality} />
         <div className="flex flex-col gap-1.5 sm:flex-row">
-          <button
-            type="button"
-            onClick={handleDownloadSeason}
-            disabled={queuing}
-            className="rounded-md bg-[var(--color-jelly-accent)] px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--color-jelly-accent-hover)] disabled:opacity-50"
-          >
-            {queuing ? "Queuing…" : "Download Season"}
-          </button>
-          <button
-            type="button"
-            onClick={handleDownloadZip}
-            className="rounded-md border border-neutral-700 px-3 py-1.5 text-center text-sm font-semibold text-neutral-200 transition-colors hover:bg-neutral-800"
-          >
-            As ZIP
-          </button>
+          <DownloadButton label={queuing ? "Queuing…" : "Download Season"} disabled={queuing} onDownload={handleDownloadSeason} />
+          <DownloadButton label="As ZIP" variant="secondary" onDownload={handleDownloadZip} />
         </div>
       </div>
     </div>

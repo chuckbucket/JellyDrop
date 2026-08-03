@@ -5,16 +5,16 @@ import { getMovie, movieDownloadUrl, queueId } from "../api/client";
 import { DownloadButton } from "../components/DownloadButton";
 import { ErrorState } from "../components/ErrorState";
 import { LoadingSpinner } from "../components/LoadingSpinner";
-import { QualitySelect } from "../components/QualitySelect";
 import { WatchedBadge } from "../components/WatchedBadge";
+import { useDownloadQueue } from "../context/DownloadQueueContext";
 import { formatBytes } from "../utils/format";
 
 export function MovieDetail() {
   const { id } = useParams<{ id: string }>();
+  const { enqueue } = useDownloadQueue();
   const [movie, setMovie] = useState<MovieDTO | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [quality, setQuality] = useState<TranscodeQuality>("original");
 
   useEffect(() => {
     if (!id) return;
@@ -29,6 +29,11 @@ export function MovieDetail() {
   if (error) return <ErrorState message={error} />;
   if (notFound) return <ErrorState message="Movie not found" />;
   if (!movie) return <LoadingSpinner />;
+
+  function handleDownload(quality: TranscodeQuality) {
+    if (!movie) return;
+    enqueue([{ id: queueId(movie.id, quality), name: movie.name, downloadUrl: movieDownloadUrl(movie.id, quality) }]);
+  }
 
   const metaParts = [
     movie.year ? String(movie.year) : null,
@@ -48,16 +53,7 @@ export function MovieDetail() {
           {metaParts.length > 0 && <p className="text-neutral-400">{metaParts.join(" · ")}</p>}
           {movie.overview && <p className="mt-3 max-w-2xl text-sm text-neutral-300">{movie.overview}</p>}
         </div>
-        <div className="flex items-center gap-2">
-          <QualitySelect value={quality} onChange={setQuality} />
-          <DownloadButton
-            id={queueId(movie.id, quality)}
-            name={movie.name}
-            downloadUrl={movieDownloadUrl(movie.id, quality)}
-            label="Download Movie"
-            className="w-fit"
-          />
-        </div>
+        <DownloadButton label="Download Movie" onDownload={handleDownload} className="w-fit" />
       </div>
     </div>
   );

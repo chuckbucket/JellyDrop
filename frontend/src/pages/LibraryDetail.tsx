@@ -3,12 +3,14 @@ import { useParams } from "react-router-dom";
 import type { LibraryDTO, MovieDTO, SeriesDTO } from "@shared/types";
 import { getLibrary } from "../api/client";
 import { ErrorState } from "../components/ErrorState";
+import { LetterFilter } from "../components/LetterFilter";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { MoviePosterCard } from "../components/MoviePosterCard";
 import { PosterCard } from "../components/PosterCard";
 import { PosterGrid } from "../components/PosterGrid";
 import { SeriesSubtitle } from "../components/SeriesSubtitle";
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
+import { useLetterFilter } from "../hooks/useLetterFilter";
 
 const PAGE_SIZE = 100;
 
@@ -37,46 +39,66 @@ export function LibraryDetail() {
       .catch((err: Error) => setError(err.message));
   }, [id]);
 
-  async function loadMore() {
-    if (!id) return;
+  async function loadMore(): Promise<{ items: Array<MovieDTO | SeriesDTO>; hasMore: boolean }> {
+    if (!id) return { items: [], hasMore: false };
     setLoadingMore(true);
     try {
       const result = await getLibrary(id, cursorRef.current, PAGE_SIZE);
       setItems((prev) => [...prev, ...result.items]);
       cursorRef.current = result.startIndex;
       setHasMore(result.hasMore);
+      return { items: result.items, hasMore: result.hasMore };
     } finally {
       setLoadingMore(false);
     }
   }
 
   const sentinelRef = useInfiniteScroll({ hasMore, loading: loadingMore, onLoadMore: loadMore });
+  const { letter, selectLetter, loadingAll, filteredItems } = useLetterFilter({ items, hasMore, loadMore });
 
   if (error) return <ErrorState message={error} />;
   if (!library) return <LoadingSpinner />;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
-      <h1 className="mb-6 text-2xl font-bold">{library.name}</h1>
-      <PosterGrid>
-        {items.map((item) =>
-          library.type === "movies" ? (
-            <MoviePosterCard key={item.id} id={item.id} name={item.name} year={item.year} posterUrl={item.posterUrl} />
-          ) : (
-            <PosterCard
-              key={item.id}
-              to={`/shows/${item.id}`}
-              posterUrl={item.posterUrl}
-              title={item.name}
-              subtitle={<SeriesSubtitle series={item as SeriesDTO} />}
-            />
-          )
-        )}
-      </PosterGrid>
-      {hasMore && (
-        <div ref={sentinelRef} className="flex justify-center py-8">
-          {loadingMore && <LoadingSpinner />}
-        </div>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold">{library.name}</h1>
+        <LetterFilter activeLetter={letter} onSelect={selectLetter} loading={loadingAll} />
+      </div>
+      {loadingAll ? (
+        <LoadingSpinner />
+      ) : (
+        <>
+          <PosterGrid>
+            {filteredItems.map((item) =>
+              library.type === "movies" ? (
+                <MoviePosterCard
+                  key={item.id}
+                  id={item.id}
+                  name={item.name}
+                  year={item.year}
+                  posterUrl={item.posterUrl}
+                  watched={(item as MovieDTO).watched}
+                  resolution={(item as MovieDTO).resolution}
+                  sizeBytes={(item as MovieDTO).sizeBytes}
+                />
+              ) : (
+                <PosterCard
+                  key={item.id}
+                  to={`/shows/${item.id}`}
+                  posterUrl={item.posterUrl}
+                  title={item.name}
+                  subtitle={<SeriesSubtitle series={item as SeriesDTO} />}
+                />
+              )
+            )}
+          </PosterGrid>
+          {letter === null && hasMore && (
+            <div ref={sentinelRef} className="flex justify-center py-8">
+              {loadingMore && <LoadingSpinner />}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
