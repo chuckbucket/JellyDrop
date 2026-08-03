@@ -35,7 +35,10 @@ downloadRouter.get(
 downloadRouter.get(
   "/download/season/:id",
   asyncHandler(async (req, res) => {
-    const manifest = await downloadService.getSeasonManifest(req.params.id);
+    const manifest = await downloadService.getSeasonManifest(req.params.id, {
+      userId: req.jellydropUser?.id,
+      unwatchedOnly: req.query.unwatchedOnly === "true",
+    });
     if (!manifest) {
       res.status(404).json({ error: "Season not found" });
       return;
@@ -47,14 +50,22 @@ downloadRouter.get(
 downloadRouter.get(
   "/download/show/:id",
   asyncHandler(async (req, res) => {
-    res.json(await downloadService.getShowManifest(req.params.id));
+    res.json(
+      await downloadService.getShowManifest(req.params.id, {
+        userId: req.jellydropUser?.id,
+        unwatchedOnly: req.query.unwatchedOnly === "true",
+      })
+    );
   })
 );
 
 downloadRouter.get(
   "/download/season/:id/zip",
   asyncHandler(async (req, res) => {
-    const found = await downloadService.streamSeasonZip(res, req.params.id);
+    const found = await downloadService.streamSeasonZip(res, req.params.id, {
+      userId: req.jellydropUser?.id,
+      unwatchedOnly: req.query.unwatchedOnly === "true",
+    });
     if (!found) res.status(404).json({ error: "Season not found" });
   })
 );
@@ -62,7 +73,10 @@ downloadRouter.get(
 downloadRouter.get(
   "/download/show/:id/zip",
   asyncHandler(async (req, res) => {
-    const found = await downloadService.streamShowZip(res, req.params.id);
+    const found = await downloadService.streamShowZip(res, req.params.id, {
+      userId: req.jellydropUser?.id,
+      unwatchedOnly: req.query.unwatchedOnly === "true",
+    });
     if (!found) res.status(404).json({ error: "Series not found" });
   })
 );

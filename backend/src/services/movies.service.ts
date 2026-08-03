@@ -8,14 +8,16 @@ export interface GetMoviesOptions {
   ids?: string[];
   startIndex?: number;
   limit?: number;
+  /** Logged-in Jellyfin user id — when present, movies come back with their watched status. */
+  userId?: string;
 }
 
 export async function getMovies(options: GetMoviesOptions): Promise<PagedResult<MovieDTO>> {
-  const { libraryId, ids, startIndex = 0, limit = 100 } = options;
+  const { libraryId, ids, startIndex = 0, limit = 100, userId } = options;
 
-  const fields = "ProductionYear,Container,Overview,MediaSources";
+  const fields = userId ? "ProductionYear,Container,Overview,MediaSources,UserData" : "ProductionYear,Container,Overview,MediaSources";
   const res = ids
-    ? await jellyfinClient.getItems({ Ids: ids.join(","), Fields: fields })
+    ? await jellyfinClient.getItems({ Ids: ids.join(","), Fields: fields, UserId: userId })
     : await jellyfinClient.getItems({
         ParentId: libraryId,
         IncludeItemTypes: "Movie",
@@ -24,10 +26,11 @@ export async function getMovies(options: GetMoviesOptions): Promise<PagedResult<
         SortBy: "SortName",
         StartIndex: startIndex,
         Limit: limit,
+        UserId: userId,
       });
 
   return {
-    items: res.Items.filter(hasMediaFile).map(mapMovie),
+    items: res.Items.filter(hasMediaFile).map((item) => mapMovie(item, Boolean(userId))),
     startIndex: res.StartIndex,
     totalRecordCount: res.TotalRecordCount,
   };

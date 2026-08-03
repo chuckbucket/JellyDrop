@@ -52,15 +52,31 @@ function toManifestItem(episode: JellyfinItem): DownloadManifestItem {
   };
 }
 
-export async function getSeasonManifest(seasonId: string): Promise<DownloadManifestDTO | null> {
-  const episodes = await showsService.getSeasonEpisodesForDownload(seasonId);
-  if (!episodes) return null;
-  return { items: episodes.map(toManifestItem) };
+/**
+ * Only actually filters when both a logged-in user and the flag are present — "unwatched only"
+ * is meaningless without knowing whose watched state to check, so it's silently a no-op otherwise
+ * rather than erroring (the frontend only ever shows the control once logged in anyway).
+ */
+export function filterUnwatched(episodes: JellyfinItem[], unwatchedOnly: boolean): JellyfinItem[] {
+  if (!unwatchedOnly) return episodes;
+  return episodes.filter((episode) => !episode.UserData?.Played);
 }
 
-export async function getShowManifest(seriesId: string): Promise<DownloadManifestDTO> {
-  const episodes = await showsService.getAllEpisodesForDownload(seriesId);
-  return { items: episodes.map(toManifestItem) };
+export async function getSeasonManifest(
+  seasonId: string,
+  options: { userId?: string; unwatchedOnly?: boolean } = {}
+): Promise<DownloadManifestDTO | null> {
+  const episodes = await showsService.getSeasonEpisodesForDownload(seasonId, options.userId);
+  if (!episodes) return null;
+  return { items: filterUnwatched(episodes, Boolean(options.userId) && Boolean(options.unwatchedOnly)).map(toManifestItem) };
+}
+
+export async function getShowManifest(
+  seriesId: string,
+  options: { userId?: string; unwatchedOnly?: boolean } = {}
+): Promise<DownloadManifestDTO> {
+  const episodes = await showsService.getAllEpisodesForDownload(seriesId, options.userId);
+  return { items: filterUnwatched(episodes, Boolean(options.userId) && Boolean(options.unwatchedOnly)).map(toManifestItem) };
 }
 
 /**
@@ -105,13 +121,18 @@ async function streamEpisodesAsZip(res: ExpressResponse, episodes: JellyfinItem[
   await archive.finalize();
 }
 
-export async function streamSeasonZip(res: ExpressResponse, seasonId: string): Promise<boolean> {
-  const [seasonItems, episodes] = await Promise.all([
+export async function streamSeasonZip(
+  res: ExpressResponse,
+  seasonId: string,
+  options: { userId?: string; unwatchedOnly?: boolean } = {}
+): Promise<boolean> {
+  const [seasonItems, allEpisodes] = await Promise.all([
     jellyfinClient.getItemsByIds([seasonId], ["SeriesName", "IndexNumber"]),
-    showsService.getSeasonEpisodesForDownload(seasonId),
+    showsService.getSeasonEpisodesForDownload(seasonId, options.userId),
   ]);
   const season = seasonItems[0];
-  if (!season || !episodes) return false;
+  if (!season || !allEpisodes) return false;
+  const episodes = filterUnwatched(allEpisodes, Boolean(options.userId) && Boolean(options.unwatchedOnly));
 
   const seasonLabel = season.IndexNumber !== undefined ? `Season ${String(season.IndexNumber).padStart(2, "0")}` : season.Name;
   console.log(`Downloading zip: ${season.SeriesName ?? "Series"} - ${seasonLabel} (${episodes.length} episodes)`);
@@ -119,13 +140,18 @@ export async function streamSeasonZip(res: ExpressResponse, seasonId: string): P
   return true;
 }
 
-export async function streamShowZip(res: ExpressResponse, seriesId: string): Promise<boolean> {
-  const [seriesItems, episodes] = await Promise.all([
+export async function streamShowZip(
+  res: ExpressResponse,
+  seriesId: string,
+  options: { userId?: string; unwatchedOnly?: boolean } = {}
+): Promise<boolean> {
+  const [seriesItems, allEpisodes] = await Promise.all([
     jellyfinClient.getItemsByIds([seriesId], []),
-    showsService.getAllEpisodesForDownload(seriesId),
+    showsService.getAllEpisodesForDownload(seriesId, options.userId),
   ]);
   const series = seriesItems[0];
   if (!series) return false;
+  const episodes = filterUnwatched(allEpisodes, Boolean(options.userId) && Boolean(options.unwatchedOnly));
 
   console.log(`Downloading zip: ${series.Name} (${episodes.length} episodes)`);
   await streamEpisodesAsZip(res, episodes, buildZipFilename(series.Name));

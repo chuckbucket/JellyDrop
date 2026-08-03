@@ -1,12 +1,15 @@
 import type {
+  AuthStatusDTO,
   DownloadManifestDTO,
   LibraryDTO,
   MovieDTO,
   PagedResult,
+  RecentlyWatchedDTO,
   SearchResultDTO,
   SeasonDetailDTO,
   SeriesDTO,
   ShowDetailDTO,
+  UserDTO,
 } from "@shared/types";
 
 export class ApiError extends Error {
@@ -23,6 +26,20 @@ async function getJson<T>(path: string): Promise<T> {
   if (!res.ok) {
     throw new ApiError(res.status, `Request failed: ${path} (${res.status})`);
   }
+  return (await res.json()) as T;
+}
+
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const payload = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new ApiError(res.status, payload?.error ?? `Request failed: ${path} (${res.status})`);
+  }
+  if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -67,12 +84,12 @@ export function search(query: string): Promise<SearchResultDTO[]> {
   return getJson(`/api/search?q=${encodeURIComponent(query)}`);
 }
 
-export function getSeasonManifest(seasonId: string): Promise<DownloadManifestDTO> {
-  return getJson(`/api/download/season/${seasonId}`);
+export function getSeasonManifest(seasonId: string, unwatchedOnly = false): Promise<DownloadManifestDTO> {
+  return getJson(`/api/download/season/${seasonId}${unwatchedOnly ? "?unwatchedOnly=true" : ""}`);
 }
 
-export function getShowManifest(seriesId: string): Promise<DownloadManifestDTO> {
-  return getJson(`/api/download/show/${seriesId}`);
+export function getShowManifest(seriesId: string, unwatchedOnly = false): Promise<DownloadManifestDTO> {
+  return getJson(`/api/download/show/${seriesId}${unwatchedOnly ? "?unwatchedOnly=true" : ""}`);
 }
 
 export function movieDownloadUrl(movieId: string): string {
@@ -86,10 +103,26 @@ export function episodeDownloadUrl(episodeId: string): string {
 /** A single native browser download of every episode bundled into one zip — bypasses the JS queue
  *  entirely (no per-file progress, no history tracking), trading that for one dialog instead of one
  *  per episode. */
-export function seasonZipUrl(seasonId: string): string {
-  return `/api/download/season/${seasonId}/zip`;
+export function seasonZipUrl(seasonId: string, unwatchedOnly = false): string {
+  return `/api/download/season/${seasonId}/zip${unwatchedOnly ? "?unwatchedOnly=true" : ""}`;
 }
 
-export function showZipUrl(seriesId: string): string {
-  return `/api/download/show/${seriesId}/zip`;
+export function showZipUrl(seriesId: string, unwatchedOnly = false): string {
+  return `/api/download/show/${seriesId}/zip${unwatchedOnly ? "?unwatchedOnly=true" : ""}`;
+}
+
+export function getAuthStatus(): Promise<AuthStatusDTO> {
+  return getJson("/api/auth/me");
+}
+
+export function login(username: string, password: string): Promise<{ user: UserDTO }> {
+  return postJson("/api/auth/login", { username, password });
+}
+
+export function logout(): Promise<void> {
+  return postJson("/api/auth/logout");
+}
+
+export function getRecentlyWatched(): Promise<RecentlyWatchedDTO> {
+  return getJson("/api/me/recently-watched");
 }

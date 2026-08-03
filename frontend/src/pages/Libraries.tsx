@@ -4,8 +4,11 @@ import type { LibraryDTO } from "@shared/types";
 import { getLibraries } from "../api/client";
 import { ErrorState } from "../components/ErrorState";
 import { LoadingSpinner } from "../components/LoadingSpinner";
+import { RecentlyWatchedRow } from "../components/RecentlyWatchedRow";
+import { useAuth } from "../context/AuthContext";
 
 export function Libraries() {
+  const { user } = useAuth();
   const [libraries, setLibraries] = useState<LibraryDTO[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,6 +23,7 @@ export function Libraries() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+      {user && <RecentlyWatchedRow />}
       <h1 className="mb-6 text-2xl font-bold">Libraries</h1>
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
         {libraries.map((library) => (

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "concurrently -n backend,frontend -c blue,green \"npm run dev --workspace=backend\" \"npm run dev --workspace=frontend\"",
     "build": "npm run build --workspace=frontend && npm run build --workspace=backend",
-    "start": "npm run start --workspace=backend"
+    "start": "npm run start --workspace=backend",
+    "test": "npm run test --workspace=backend"
   },
   "workspaces": [
     "backend",

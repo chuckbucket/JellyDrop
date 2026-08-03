@@ -26,6 +26,11 @@ export interface JellyfinMediaSource {
   MediaStreams?: JellyfinMediaStream[];
 }
 
+export interface JellyfinUserData {
+  Played?: boolean;
+  LastPlayedDate?: string;
+}
+
 export interface JellyfinItem {
   Id: string;
   Name: string;
@@ -38,6 +43,8 @@ export interface JellyfinItem {
   ParentIndexNumber?: number;
   Overview?: string;
   MediaSources?: JellyfinMediaSource[];
+  /** Only populated when the request included a UserId — watched/resume state is per-user. */
+  UserData?: JellyfinUserData;
 }
 
 export interface JellyfinItemsResponse {

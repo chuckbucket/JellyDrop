@@ -5,6 +5,7 @@ import { getMovie, movieDownloadUrl } from "../api/client";
 import { DownloadButton } from "../components/DownloadButton";
 import { ErrorState } from "../components/ErrorState";
 import { LoadingSpinner } from "../components/LoadingSpinner";
+import { WatchedBadge } from "../components/WatchedBadge";
 import { formatBytes } from "../utils/format";
 
 export function MovieDetail() {
@@ -38,7 +39,10 @@ export function MovieDetail() {
       <img src={movie.posterUrl} alt={movie.name} className="w-56 shrink-0 rounded-lg shadow-xl" />
       <div className="flex flex-col gap-4">
         <div>
-          <h1 className="text-3xl font-bold">{movie.name}</h1>
+          <div className="flex items-center justify-center gap-2 sm:justify-start">
+            <h1 className="text-3xl font-bold">{movie.name}</h1>
+            {movie.watched && <WatchedBadge />}
+          </div>
           {metaParts.length > 0 && <p className="text-neutral-400">{metaParts.join(" · ")}</p>}
           {movie.overview && <p className="mt-3 max-w-2xl text-sm text-neutral-300">{movie.overview}</p>}
         </div>

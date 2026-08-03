@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+import { AuthControl } from "./AuthControl";
 
 const links: Array<{ to: string; label: string; end?: boolean }> = [
   { to: "/", label: "Libraries", end: true },
@@ -14,7 +15,7 @@ export function NavBar() {
         <NavLink to="/" className="text-lg font-bold tracking-tight text-[var(--color-jelly-accent)]">
           JellyDrop
         </NavLink>
-        <nav className="flex gap-6">
+        <nav className="flex flex-1 gap-6">
           {links.map((link) => (
             <NavLink
               key={link.to}
@@ -28,6 +29,7 @@ export function NavBar() {
             </NavLink>
           ))}
         </nav>
+        <AuthControl />
       </div>
     </header>
   );

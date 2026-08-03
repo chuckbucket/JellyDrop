@@ -5,14 +5,17 @@ import { getShow, getShowManifest, showZipUrl } from "../api/client";
 import { ErrorState } from "../components/ErrorState";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { SeasonRow } from "../components/SeasonRow";
+import { useAuth } from "../context/AuthContext";
 import { useDownloadQueue } from "../context/DownloadQueueContext";
 import { formatBytes } from "../utils/format";
 
 export function ShowDetail() {
   const { id } = useParams<{ id: string }>();
+  const { user } = useAuth();
   const [show, setShow] = useState<ShowDetailDTO | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [queuingAll, setQueuingAll] = useState(false);
+  const [unwatchedOnly, setUnwatchedOnly] = useState(false);
   const { enqueue } = useDownloadQueue();
 
   useEffect(() => {
@@ -26,7 +29,7 @@ export function ShowDetail() {
     if (!id) return;
     setQueuingAll(true);
     try {
-      const manifest = await getShowManifest(id);
+      const manifest = await getShowManifest(id, unwatchedOnly);
       enqueue(manifest.items);
     } finally {
       setQueuingAll(false);
@@ -54,6 +57,17 @@ export function ShowDetail() {
             <p className="text-neutral-400">{metaParts.join(" · ")}</p>
             {show.overview && <p className="mt-3 max-w-2xl text-sm text-neutral-300">{show.overview}</p>}
           </div>
+          {user && (
+            <label className="flex w-fit items-center gap-1.5 text-sm text-neutral-400">
+              <input
+                type="checkbox"
+                checked={unwatchedOnly}
+                onChange={(event) => setUnwatchedOnly(event.target.checked)}
+                className="accent-[var(--color-jelly-accent)]"
+              />
+              Unwatched only
+            </label>
+          )}
           <div className="flex w-fit flex-col gap-2 sm:flex-row">
             <button
               type="button"
@@ -64,7 +78,7 @@ export function ShowDetail() {
               {queuingAll ? "Queuing…" : "Download Entire Series"}
             </button>
             <a
-              href={showZipUrl(show.id)}
+              href={showZipUrl(show.id, unwatchedOnly)}
               download
               className="rounded-md border border-neutral-700 px-4 py-2 text-center font-semibold text-neutral-200 transition-colors hover:bg-neutral-800"
             >

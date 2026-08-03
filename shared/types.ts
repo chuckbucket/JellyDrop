@@ -21,6 +21,8 @@ export interface MovieDTO {
   overview: string | null;
   resolution: string | null;
   sizeBytes: number | null;
+  /** null when nobody is logged in — watched status is only known per Jellyfin user. */
+  watched: boolean | null;
 }
 
 export interface SeriesDTO {
@@ -41,6 +43,8 @@ export interface SeasonSummaryDTO {
   sizeBytes: number | null;
   overview: string | null;
   posterUrl: string;
+  /** null when nobody is logged in. */
+  watchedCount: number | null;
 }
 
 export interface ShowDetailDTO {
@@ -60,6 +64,8 @@ export interface EpisodeDTO {
   seasonIndexNumber: number | null;
   resolution: string | null;
   sizeBytes: number | null;
+  /** null when nobody is logged in — watched status is only known per Jellyfin user. */
+  watched: boolean | null;
 }
 
 export interface SeasonDetailDTO {
@@ -95,4 +101,31 @@ export interface DownloadManifestItem {
 
 export interface DownloadManifestDTO {
   items: DownloadManifestItem[];
+}
+
+export type AuthMode = "open" | "required";
+
+export interface UserDTO {
+  id: string;
+  name: string;
+}
+
+export interface AuthStatusDTO {
+  authMode: AuthMode;
+  user: UserDTO | null;
+}
+
+export type RecentlyWatchedType = "movie" | "series";
+
+export interface RecentlyWatchedItemDTO {
+  id: string;
+  type: RecentlyWatchedType;
+  name: string;
+  posterUrl: string;
+  year: number | null;
+  lastPlayedAt: string | null;
+}
+
+export interface RecentlyWatchedDTO {
+  items: RecentlyWatchedItemDTO[];
 }

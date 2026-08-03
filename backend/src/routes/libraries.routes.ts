@@ -27,7 +27,7 @@ librariesRouter.get(
 
     const contents =
       library.type === "movies"
-        ? await moviesService.getMovies({ libraryId: library.id, startIndex, limit })
+        ? await moviesService.getMovies({ libraryId: library.id, startIndex, limit, userId: req.jellydropUser?.id })
         : await showsService.getShows({ libraryId: library.id, startIndex, limit });
 
     res.json({ library, ...contents });

@@ -31,12 +31,21 @@ export function getResolutionLabel(item: JellyfinItem): string | null {
   return `${height}p`;
 }
 
+/**
+ * `null` means "we don't know" — nobody was logged in, so the request never asked Jellyfin for
+ * per-user watched state in the first place. Only meaningful once a UserId was actually requested.
+ */
+export function mapWatched(item: JellyfinItem, userRequested: boolean): boolean | null {
+  if (!userRequested) return null;
+  return item.UserData?.Played ?? false;
+}
+
 export function mapLibrary(folder: JellyfinVirtualFolder): LibraryDTO | null {
   if (folder.CollectionType !== "movies" && folder.CollectionType !== "tvshows") return null;
   return { id: folder.ItemId, name: folder.Name, type: folder.CollectionType, posterUrl: posterUrl(folder.ItemId) };
 }
 
-export function mapMovie(item: JellyfinItem): MovieDTO {
+export function mapMovie(item: JellyfinItem, userRequested = false): MovieDTO {
   return {
     id: item.Id,
     name: item.Name,
@@ -45,6 +54,7 @@ export function mapMovie(item: JellyfinItem): MovieDTO {
     overview: item.Overview ?? null,
     resolution: getResolutionLabel(item),
     sizeBytes: getFileSizeBytes(item),
+    watched: mapWatched(item, userRequested),
   };
 }
 

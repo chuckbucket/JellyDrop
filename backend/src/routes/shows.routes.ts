@@ -17,7 +17,7 @@ showsRouter.get(
 showsRouter.get(
   "/show/:id",
   asyncHandler(async (req, res) => {
-    const show = await showsService.getShowDetail(req.params.id);
+    const show = await showsService.getShowDetail(req.params.id, req.jellydropUser?.id);
     if (!show) {
       res.status(404).json({ error: "Show not found" });
       return;
@@ -29,7 +29,7 @@ showsRouter.get(
 showsRouter.get(
   "/season/:id",
   asyncHandler(async (req, res) => {
-    const season = await showsService.getSeasonDetail(req.params.id);
+    const season = await showsService.getSeasonDetail(req.params.id, req.jellydropUser?.id);
     if (!season) {
       res.status(404).json({ error: "Season not found" });
       return;

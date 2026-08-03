@@ -7,13 +7,16 @@ interface PosterCardProps {
   title: string;
   subtitle?: ReactNode;
   action?: ReactNode;
+  /** Small, always-visible top-left chip (e.g. a "Watched" mark) — unlike `action`, not hover-gated. */
+  badge?: ReactNode;
 }
 
-export function PosterCard({ to, posterUrl, title, subtitle, action }: PosterCardProps) {
+export function PosterCard({ to, posterUrl, title, subtitle, action, badge }: PosterCardProps) {
   return (
     <Link to={to} className="group flex flex-col gap-2">
       <div className="relative aspect-2/3 overflow-hidden rounded-lg bg-neutral-800 shadow-md transition-transform duration-200 group-hover:scale-[1.03] group-hover:shadow-xl">
         <img src={posterUrl} alt={title} loading="lazy" className="h-full w-full object-cover" />
+        {badge && <div className="absolute top-2 left-2">{badge}</div>}
         {action && (
           <div className="absolute inset-x-0 bottom-0 flex justify-end bg-gradient-to-t from-black/85 to-transparent p-2 opacity-0 transition-opacity group-hover:opacity-100">
             {action}

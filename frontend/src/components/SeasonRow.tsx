@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { SeasonSummaryDTO } from "@shared/types";
 import { getSeasonManifest, seasonZipUrl } from "../api/client";
+import { useAuth } from "../context/AuthContext";
 import { useDownloadQueue } from "../context/DownloadQueueContext";
 import { formatBytes } from "../utils/format";
 
@@ -11,13 +12,15 @@ interface SeasonRowProps {
 }
 
 export function SeasonRow({ seriesId, season }: SeasonRowProps) {
+  const { user } = useAuth();
   const { enqueue } = useDownloadQueue();
   const [queuing, setQueuing] = useState(false);
+  const [unwatchedOnly, setUnwatchedOnly] = useState(false);
 
   async function handleDownloadSeason() {
     setQueuing(true);
     try {
-      const manifest = await getSeasonManifest(season.id);
+      const manifest = await getSeasonManifest(season.id, unwatchedOnly);
       enqueue(manifest.items);
     } finally {
       setQueuing(false);
@@ -38,26 +41,40 @@ export function SeasonRow({ seriesId, season }: SeasonRowProps) {
           <p className="text-sm text-neutral-400">
             {season.episodeCount} episode{season.episodeCount === 1 ? "" : "s"}
             {season.sizeBytes !== null && ` · ${formatBytes(season.sizeBytes)}`}
+            {season.watchedCount !== null && ` · ${season.watchedCount}/${season.episodeCount} watched`}
           </p>
           {season.overview && <p className="mt-1 line-clamp-2 text-sm text-neutral-400">{season.overview}</p>}
         </div>
       </Link>
-      <div className="flex shrink-0 flex-col gap-1.5 sm:flex-row">
-        <button
-          type="button"
-          onClick={handleDownloadSeason}
-          disabled={queuing}
-          className="rounded-md bg-[var(--color-jelly-accent)] px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--color-jelly-accent-hover)] disabled:opacity-50"
-        >
-          {queuing ? "Queuing…" : "Download Season"}
-        </button>
-        <a
-          href={seasonZipUrl(season.id)}
-          download
-          className="rounded-md border border-neutral-700 px-3 py-1.5 text-center text-sm font-semibold text-neutral-200 transition-colors hover:bg-neutral-800"
-        >
-          As ZIP
-        </a>
+      <div className="flex shrink-0 flex-col items-end gap-1.5">
+        {user && (
+          <label className="flex items-center gap-1.5 text-xs text-neutral-400">
+            <input
+              type="checkbox"
+              checked={unwatchedOnly}
+              onChange={(event) => setUnwatchedOnly(event.target.checked)}
+              className="accent-[var(--color-jelly-accent)]"
+            />
+            Unwatched only
+          </label>
+        )}
+        <div className="flex flex-col gap-1.5 sm:flex-row">
+          <button
+            type="button"
+            onClick={handleDownloadSeason}
+            disabled={queuing}
+            className="rounded-md bg-[var(--color-jelly-accent)] px-3 py-1.5 text-sm font-semibold text-white transition-colors hover:bg-[var(--color-jelly-accent-hover)] disabled:opacity-50"
+          >
+            {queuing ? "Queuing…" : "Download Season"}
+          </button>
+          <a
+            href={seasonZipUrl(season.id, unwatchedOnly)}
+            download
+            className="rounded-md border border-neutral-700 px-3 py-1.5 text-center text-sm font-semibold text-neutral-200 transition-colors hover:bg-neutral-800"
+          >
+            As ZIP
+          </a>
+        </div>
       </div>
     </div>
   );

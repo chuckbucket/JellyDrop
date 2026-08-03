@@ -2,7 +2,9 @@
 
 A lightweight download portal for [Jellyfin](https://jellyfin.org/). JellyDrop gives you a clean,
 Netflix-style interface for browsing your Jellyfin libraries and downloading media for offline use —
-nothing else. No transcoding, no playback, no accounts. Just posters and a download button.
+nothing else. No transcoding, no playback. Just posters and a download button. Logging in with a
+Jellyfin account is optional and only unlocks personalization (watched marks, recently watched,
+unwatched-only downloads) — see [Optional login](#optional-login) below.
 
 Only playable media files are ever downloadable. `.nfo` files, artwork, subtitles, metadata, and
 filesystem paths are never exposed to the browser.
@@ -18,23 +20,48 @@ filesystem paths are never exposed to the browser.
 - Every file saves to the browser's standard Downloads location — no folder prompts, nothing to
   configure, as automatic as the browser allows
 - Dark, responsive UI
-- Single Docker container, configured entirely with three environment variables
+- Single Docker container, configured entirely with environment variables
+- Optional login with a real Jellyfin account — watched marks, a recently-watched row, and
+  "download only unwatched episodes"; can also be set to *required* to gate the whole app
 
 ## Configuration
 
 JellyDrop is configured with environment variables only — there is no frontend configuration.
 
-| Variable           | Description                                                       |
-| ------------------ | ----------------------------------------------------------------- |
-| `JELLYFIN_URL`     | Base URL of your Jellyfin server, e.g. `http://192.168.1.50:8096` |
-| `JELLYFIN_API_KEY` | An API key generated in Jellyfin under Dashboard → API Keys       |
-| `PORT`             | Port JellyDrop listens on (default `8080`)                        |
+| Variable           | Description                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------- |
+| `JELLYFIN_URL`     | Base URL of your Jellyfin server, e.g. `http://192.168.1.50:8096`                 |
+| `JELLYFIN_API_KEY` | An API key generated in Jellyfin under Dashboard → API Keys                       |
+| `PORT`             | Port JellyDrop listens on (default `8080`)                                        |
+| `AUTH_MODE`        | `open` (default) — login is optional; `required` — every page needs a login       |
+| `COOKIE_SECURE`    | `true`/`false` (default `false`). Set `true` when serving JellyDrop over HTTPS    |
 
 Copy `.env.example` to `.env` and fill in your values:
 
 ```bash
 cp .env.example .env
 ```
+
+## Optional login
+
+By default (`AUTH_MODE=open`) JellyDrop works exactly as before: no login required, everyone who can
+reach it can browse and download everything the configured `JELLYFIN_API_KEY` can see. A "Log in"
+control in the nav bar lets anyone log in with a **real Jellyfin username/password** to unlock:
+
+- Watched marks on episodes and movies
+- A "Recently Watched" row on the Libraries page
+- An "Unwatched only" checkbox on season/series downloads
+
+Login is a real credential check against your Jellyfin server, but it's an access gate and
+personalization layer only — every logged-in user still sees and can download everything the shared
+`JELLYFIN_API_KEY` can see, the same as in `open` mode. JellyDrop does **not** enforce each user's own
+Jellyfin library permissions.
+
+Set `AUTH_MODE=required` to gate the entire app behind login — nobody can browse or download
+anything without first signing in with a Jellyfin account.
+
+Sessions are kept in memory on the server (not persisted to disk), so a restart/redeploy logs
+everyone out — just log back in.
 
 ## Running with Docker (recommended)
 
@@ -94,15 +121,16 @@ JellyDrop/
 ├── backend/      Express + TypeScript API — the only thing that talks to Jellyfin
 │   └── src/
 │       ├── jellyfin/     Jellyfin REST API client (the API key never leaves this layer)
+│       ├── auth/         in-memory session store + cookie helpers
 │       ├── services/     business logic: mapping Jellyfin items to clean DTOs, filename building
 │       ├── routes/       Express route handlers
 │       └── utils/        streaming proxy helper, filename sanitization, DTO mappers
 └── frontend/     React + Vite + Tailwind SPA
     └── src/
         ├── api/          typed fetch client for the backend API
-        ├── context/       the client-side download queue (state machine + sequential processor)
+        ├── context/       download queue + auth state (each a state machine + provider)
         ├── pages/        one component per route
-        └── components/   poster cards/grids, download buttons, nav, the queue panel
+        └── components/   poster cards/grids, download buttons, nav, login, the queue panel
 ```
 
 The backend is the only part of the system that knows `JELLYFIN_URL`/`JELLYFIN_API_KEY`. Every poster
@@ -118,24 +146,30 @@ order, one at a time.
 
 ## API
 
-| Route                           | Description                                                        |
-| ------------------------------- | ------------------------------------------------------------------ |
-| `GET /api/libraries`            | List movie/TV libraries                                            |
-| `GET /api/library/:id`          | Contents of one library                                            |
-| `GET /api/movies`               | Movies (optionally filtered by `libraryId`, or looked up by `ids`) |
-| `GET /api/shows`                | TV series (optionally filtered by `libraryId`)                     |
-| `GET /api/show/:id`             | A series' seasons, with episode counts                             |
-| `GET /api/season/:id`           | A season's episode list                                            |
-| `GET /api/search?q=`            | Search movies and series                                           |
-| `GET /api/download/movie/:id`   | Streams the movie's media file                                     |
-| `GET /api/download/episode/:id` | Streams the episode's media file                                   |
-| `GET /api/download/season/:id`  | Ordered download manifest for a season                             |
-| `GET /api/download/show/:id`    | Ordered download manifest for an entire series                     |
-| `GET /api/image/:id`            | Poster image proxy (keeps the Jellyfin API key server-side)        |
+| Route                           | Description                                                                                     |
+| -------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `GET /healthz`                  | Liveness check, unauthenticated (used by Docker's `HEALTHCHECK`)                                |
+| `GET /api/libraries`            | List movie/TV libraries                                                                         |
+| `GET /api/library/:id`          | Contents of one library                                                                         |
+| `GET /api/movies`               | Movies (optionally filtered by `libraryId`, or looked up by `ids`)                              |
+| `GET /api/shows`                | TV series (optionally filtered by `libraryId`)                                                  |
+| `GET /api/show/:id`             | A series' seasons, with episode counts                                                          |
+| `GET /api/season/:id`           | A season's episode list                                                                         |
+| `GET /api/search?q=`            | Search movies and series                                                                        |
+| `GET /api/download/movie/:id`   | Streams the movie's media file                                                                  |
+| `GET /api/download/episode/:id` | Streams the episode's media file                                                                |
+| `GET /api/download/season/:id`  | Ordered download manifest for a season (`?unwatchedOnly=true` when logged in)                   |
+| `GET /api/download/show/:id`    | Ordered download manifest for an entire series (`?unwatchedOnly=true` when logged in)           |
+| `GET /api/image/:id`            | Poster image proxy (keeps the Jellyfin API key server-side)                                     |
+| `POST /api/auth/login`          | Log in with a Jellyfin username/password, starts a session                                      |
+| `POST /api/auth/logout`         | Ends the current session                                                                        |
+| `GET /api/auth/me`              | Current auth mode and logged-in user, if any                                                    |
+| `GET /api/me/recently-watched`  | Recently watched movies/series for the logged-in user (requires login)                          |
 
 ## Not in this MVP (by design)
 
-Jellyfin user authentication, resumable downloads, a PWA/offline shell, download history, favorites,
-multiple Jellyfin servers, and Sonarr/Radarr integration are all left out on purpose. The
-routes/services split in the backend and the plain React context in the frontend are meant to make
-adding any of these later straightforward without a rewrite.
+Per-user Jellyfin library permissions (every logged-in user sees everything the shared
+`JELLYFIN_API_KEY` can), resumable downloads, a PWA/offline shell, favorites, multiple Jellyfin
+servers, and Sonarr/Radarr integration are all left out on purpose. The routes/services split in the
+backend and the plain React context in the frontend are meant to make adding any of these later
+straightforward without a rewrite.

@@ -12,6 +12,6 @@ moviesRouter.get(
     const ids = typeof req.query.ids === "string" ? req.query.ids.split(",").filter(Boolean) : undefined;
     const startIndex = Number(req.query.startIndex) || 0;
     const limit = Number(req.query.limit) || 100;
-    res.json(await moviesService.getMovies({ libraryId, ids, startIndex, limit }));
+    res.json(await moviesService.getMovies({ libraryId, ids, startIndex, limit, userId: req.jellydropUser?.id }));
   })
 );
