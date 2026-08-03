@@ -1,17 +1,18 @@
 import type { Response as ExpressResponse } from "express";
+import type { Readable } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import type { JellyfinItem } from "../jellyfin/types";
 
 const { createdArchives } = vi.hoisted(() => ({ createdArchives: [] as FakeArchive[] }));
 
 interface FakeArchive {
-  appended: Array<{ name: string }>;
+  appended: Array<{ name: string; stream: unknown }>;
   destroyed: boolean;
 }
 
 vi.mock("archiver", () => {
   class FakeArchiveImpl implements FakeArchive {
-    appended: Array<{ name: string }> = [];
+    appended: Array<{ name: string; stream: unknown }> = [];
     destroyed = false;
     on() {
       return this;
@@ -19,8 +20,8 @@ vi.mock("archiver", () => {
     pipe() {
       return this;
     }
-    append(_stream: unknown, opts: { name: string }) {
-      this.appended.push({ name: opts.name });
+    append(stream: unknown, opts: { name: string }) {
+      this.appended.push({ name: opts.name, stream });
     }
     async finalize() {}
     destroy() {
@@ -183,6 +184,21 @@ describe("streamSeasonZip", () => {
 
     const archive = createdArchives.at(-1)!;
     expect(archive.appended.map((entry) => entry.name)).toEqual(["folder.jpg", "Test Show - S01E00 - e1.mkv"]);
+  });
+
+  it("attaches an error listener to each per-episode stream before handing it to the archive (regression: an unhandled 'error' from a Jellyfin-side hiccup, not just a disconnecting client, used to crash the process)", async () => {
+    vi.mocked(jellyfinClient.getItemsByIds).mockResolvedValueOnce([
+      { Id: "season-1", Name: "Season 1", Type: "Season", SeriesName: "Test Show", IndexNumber: 1 },
+    ]);
+    vi.mocked(showsService.getSeasonEpisodesForDownload).mockResolvedValueOnce([episode("e1", undefined, 1)]);
+
+    await streamSeasonZip(fakeResponse(), "season-1");
+
+    const archive = createdArchives.at(-1)!;
+    const episodeStream = archive.appended.find((entry) => entry.name.includes("e1"))!.stream as Readable;
+    // Node's EventEmitter throws synchronously from .emit("error", ...) when there are zero
+    // listeners for it — so this only passes if toSafeNodeStream actually registered one.
+    expect(() => episodeStream.emit("error", new Error("ECONNRESET from Jellyfin"))).not.toThrow();
   });
 
   it("survives the client's connection erroring mid-transfer instead of crashing (regression: a device going to sleep mid-download used to kill the whole process)", async () => {

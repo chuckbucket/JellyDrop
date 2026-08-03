@@ -100,13 +100,21 @@ function episodeFilename(episode: JellyfinItem, containerOverride?: string, tran
 }
 
 /** Logs whether a transcode is actually happening for this request, and why — including the skip
- *  case (already small/low-res enough), so "why didn't this get smaller" is answerable from logs alone. */
-function logTranscodeDecision(name: string, quality: TranscodeQuality, decision: { shouldTranscode: boolean; reason: string }): void {
+ *  case (already small/low-res enough), so "why didn't this get smaller" is answerable from logs
+ *  alone. `sequence` (e.g. "5 of 91") gives a running position within a multi-episode zip, so a
+ *  long-running series download's progress is visible from the logs alone too. */
+function logTranscodeDecision(
+  name: string,
+  quality: TranscodeQuality,
+  decision: { shouldTranscode: boolean; reason: string },
+  sequence?: { index: number; total: number }
+): void {
   if (quality === "original") return;
+  const position = sequence ? ` (${sequence.index} of ${sequence.total})` : "";
   if (decision.shouldTranscode) {
-    console.log(`[transcode] "${name}": transcoding to ${quality} (${decision.reason})`);
+    console.log(`[transcode] "${name}"${position}: transcoding to ${quality} (${decision.reason})`);
   } else {
-    console.log(`[transcode] "${name}": skipping transcode to ${quality} — ${decision.reason}`);
+    console.log(`[transcode] "${name}"${position}: skipping transcode to ${quality} — ${decision.reason}`);
   }
 }
 
@@ -114,6 +122,22 @@ function logTranscodeDecision(name: string, quality: TranscodeQuality, decision:
  *  folder names read the same as everything else. */
 function seasonFolderName(seasonNumber: number): string {
   return `Season ${String(seasonNumber).padStart(2, "0")}`;
+}
+
+/**
+ * `Readable.fromWeb()` streams handed to `archive.append()` need their own 'error' listener —
+ * Node treats an unlistened 'error' event on *any* stream as fatal (it throws and crashes the
+ * whole process), same as the outbound response stream already guarded above. This is a different
+ * failure than a client disconnecting though: a hiccup on Jellyfin's *own* side mid-transfer (its
+ * transcode process erroring, a network blip between JellyDrop and Jellyfin) surfaces as an error
+ * on this inbound stream, not on `res`, and `pipeJellyfinResponse` (used for single-file downloads)
+ * already listens for exactly this on its own source stream — this is that same protection for the
+ * per-episode streams built up while assembling a ZIP.
+ */
+function toSafeNodeStream(body: WebReadableStream, context: string): Readable {
+  const stream = Readable.fromWeb(body);
+  stream.on("error", (err) => console.error(`[download] upstream stream error ("${context}"):`, err.message));
+  return stream;
 }
 
 /**
@@ -240,22 +264,23 @@ async function streamEpisodesAsZip(
     if (clientGone) return;
     const jfRes = await jellyfinClient.streamProxy(`/Items/${itemId}/Images/Primary`);
     if (!jfRes.ok || !jfRes.body) continue;
-    archive.append(Readable.fromWeb(jfRes.body as unknown as WebReadableStream), { name: entryPath, store: true });
+    archive.append(toSafeNodeStream(jfRes.body as unknown as WebReadableStream, entryPath), { name: entryPath, store: true });
   }
 
-  for (const episode of episodes) {
+  for (const [index, episode] of episodes.entries()) {
     if (clientGone) return;
+    const sequence = { index: index + 1, total: episodes.length };
     const decision = decideTranscodeForItem(episode, options.quality);
-    logTranscodeDecision(episode.Name, options.quality, decision);
+    logTranscodeDecision(episode.Name, options.quality, decision, sequence);
     const entryName = buildEntryName(episode);
 
     if (!decision.shouldTranscode) {
       const jfRes = await jellyfinClient.streamProxy(`/Items/${episode.Id}/Download`);
       if (!jfRes.ok || !jfRes.body) {
-        console.error(`[download] skipping "${episode.Name}" in zip: upstream status ${jfRes.status}`);
+        console.error(`[download] skipping "${episode.Name}" (${sequence.index} of ${sequence.total}) in zip: upstream status ${jfRes.status}`);
         continue;
       }
-      archive.append(Readable.fromWeb(jfRes.body as unknown as WebReadableStream), { name: entryName, store: true });
+      archive.append(toSafeNodeStream(jfRes.body as unknown as WebReadableStream, episode.Name), { name: entryName, store: true });
       continue;
     }
 
@@ -265,10 +290,10 @@ async function streamEpisodesAsZip(
       QUALITY_BITRATE_CEILING_BPS[options.quality as keyof typeof QUALITY_BITRATE_CEILING_BPS]
     );
     if (!jfRes.ok || !jfRes.body) {
-      console.error(`[download] skipping "${episode.Name}" in zip: transcode status ${jfRes.status}`);
+      console.error(`[download] skipping "${episode.Name}" (${sequence.index} of ${sequence.total}) in zip: transcode status ${jfRes.status}`);
       continue;
     }
-    archive.append(Readable.fromWeb(jfRes.body as unknown as WebReadableStream), {
+    archive.append(toSafeNodeStream(jfRes.body as unknown as WebReadableStream, episode.Name), {
       name: entryName.replace(/\.\w+$/, ` (Transcoded ${options.quality}).mkv`),
       store: true,
     });
