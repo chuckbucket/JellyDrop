@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useDownloadQueue, type DownloadMethod, type HistoryEntry, type QueueItem, type QueueItemStatus } from "../context/DownloadQueueContext";
+import { useDownloadQueue, type DownloadMethod, type QueueItem, type QueueItemStatus } from "../context/DownloadQueueContext";
 import { formatBytes } from "../utils/format";
 
 const statusLabel: Record<QueueItemStatus, string> = {
@@ -8,7 +8,7 @@ const statusLabel: Record<QueueItemStatus, string> = {
   saving: "Saving to disk…",
   complete: "Complete",
   failed: "Failed",
-  skipped: "Already downloaded",
+  cancelled: "Cancelled",
 };
 
 const statusColor: Record<QueueItemStatus, string> = {
@@ -17,7 +17,7 @@ const statusColor: Record<QueueItemStatus, string> = {
   saving: "text-amber-400",
   complete: "text-emerald-400",
   failed: "text-red-400",
-  skipped: "text-neutral-500",
+  cancelled: "text-neutral-500",
 };
 
 const methodOptions: Array<{ value: DownloadMethod; label: string }> = [
@@ -31,9 +31,11 @@ const methodOptions: Array<{ value: DownloadMethod; label: string }> = [
 // notice that from here. Every resolved state gets a way to just try it again.
 const retryLabel: Partial<Record<QueueItemStatus, string>> = {
   failed: "Retry",
-  skipped: "Download anyway",
+  cancelled: "Retry",
   complete: "Download again",
 };
+
+const cancellableStatuses: QueueItemStatus[] = ["waiting", "downloading", "saving"];
 
 /** Only "downloading" (blob, with a known size) and "saving" ever have real progress to show. */
 function ProgressBar({ item, thin = false }: { item: QueueItem; thin?: boolean }) {
@@ -90,50 +92,22 @@ function ItemStatusLine({ item }: { item: QueueItem }) {
   );
 }
 
-function HistoryRow({ entry, onRedownload }: { entry: HistoryEntry; onRedownload: () => void }) {
-  return (
-    <div className="flex items-center justify-between gap-2 border-b border-neutral-800/60 px-4 py-2 last:border-b-0">
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm text-neutral-200">{entry.name}</p>
-        <p className="text-xs text-neutral-500">{formatHistoryTimestamp(entry.downloadedAt)}</p>
-      </div>
-      <button
-        type="button"
-        onClick={onRedownload}
-        className="shrink-0 rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-800"
-      >
-        Download again
-      </button>
-    </div>
-  );
-}
-
-function formatHistoryTimestamp(downloadedAt: number): string {
-  return new Date(downloadedAt).toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
 export function DownloadQueuePanel() {
   const {
     items,
     retry,
+    cancel,
     clearCompleted,
     downloadMethod,
     setDownloadMethod,
     awaitingContinue,
     continueQueue,
-    downloadHistory,
-    clearDownloadHistory,
-    redownloadFromHistory,
     pauseBetweenDownloads,
     setPauseBetweenDownloads,
+    paused,
+    setPaused,
   } = useDownloadQueue();
   const [collapsed, setCollapsed] = useState(true);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Make sure a "ready for the next one" prompt is never missed behind a collapsed panel.
@@ -144,9 +118,9 @@ export function DownloadQueuePanel() {
   const remainingCount = items.filter(
     (item) => item.status === "waiting" || item.status === "downloading" || item.status === "saving"
   ).length;
-  const completeCount = items.filter((item) => item.status === "complete" || item.status === "skipped").length;
+  const completeCount = items.filter((item) => item.status === "complete").length;
   const failedCount = items.filter((item) => item.status === "failed").length;
-  const hasCompleted = items.some((item) => item.status === "complete" || item.status === "skipped");
+  const hasCompleted = items.some((item) => item.status === "complete" || item.status === "cancelled");
   const activeItem = items.find((item) => item.status === "downloading" || item.status === "saving");
 
   return (
@@ -177,6 +151,17 @@ export function DownloadQueuePanel() {
             <span>{collapsed ? "▲" : "▼"}</span>
           </span>
         </button>
+        {remainingCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setPaused(!paused)}
+            aria-label={paused ? "Resume queue" : "Pause queue"}
+            title={paused ? "Resume queue" : "Pause queue"}
+            className="shrink-0 px-3 py-3 text-sm text-neutral-500 transition-colors hover:text-neutral-200"
+          >
+            {paused ? "▶" : "⏸"}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => {
@@ -202,6 +187,13 @@ export function DownloadQueuePanel() {
 
       {!collapsed && (
         <>
+          {paused && (
+            <div className="border-t border-neutral-800 bg-black/20 px-4 py-2">
+              <p className="text-xs text-neutral-400">
+                Queue paused — nothing new will start. Anything already downloading finishes normally.
+              </p>
+            </div>
+          )}
           {awaitingContinue && (
             <div className="border-t border-neutral-800 bg-[var(--color-jelly-accent)]/10 px-4 py-3">
               <p className="text-xs text-neutral-300">
@@ -248,39 +240,12 @@ export function DownloadQueuePanel() {
               </label>
             </div>
           )}
-          {downloadHistory.length > 0 && (
-            <div className="border-t border-neutral-800">
-              <div className="flex items-center justify-between gap-2 px-4 py-2 text-xs text-neutral-400">
-                <button
-                  type="button"
-                  onClick={() => setHistoryOpen((value) => !value)}
-                  className="flex-1 text-left hover:text-neutral-200"
-                >
-                  {historyOpen ? "▼" : "▶"} {downloadHistory.length} in download history
-                </button>
-                <button
-                  type="button"
-                  onClick={clearDownloadHistory}
-                  className="shrink-0 rounded-md border border-neutral-700 px-2 py-1 text-neutral-200 hover:bg-neutral-800"
-                >
-                  Clear history
-                </button>
-              </div>
-              {historyOpen && (
-                <div className="max-h-52 overflow-y-auto border-t border-neutral-800/60">
-                  {downloadHistory.map((entry) => (
-                    <HistoryRow key={entry.id} entry={entry} onRedownload={() => redownloadFromHistory(entry)} />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
           {items.length === 0 ? (
             <p className="border-t border-neutral-800 px-4 py-4 text-center text-xs text-neutral-500">
               Downloads you start will show up here.
             </p>
           ) : (
-            <div className="max-h-80 overflow-y-auto border-t border-neutral-800">
+            <div className="max-h-96 overflow-y-auto border-t border-neutral-800">
               {items.map((item) => (
                 <div
                   key={item.queueId}
@@ -290,6 +255,15 @@ export function DownloadQueuePanel() {
                     <p className="truncate text-sm text-neutral-200">{item.name}</p>
                     <ItemStatusLine item={item} />
                   </div>
+                  {cancellableStatuses.includes(item.status) && (
+                    <button
+                      type="button"
+                      onClick={() => cancel(item.queueId)}
+                      className="shrink-0 rounded-md border border-neutral-700 px-2 py-1 text-xs text-neutral-200 hover:bg-neutral-800"
+                    >
+                      Cancel
+                    </button>
+                  )}
                   {retryLabel[item.status] && (
                     <button
                       type="button"

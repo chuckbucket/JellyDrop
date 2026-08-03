@@ -36,6 +36,13 @@ export function ShowDetail() {
     }
   }
 
+  // Routed through the same queue as everything else (rather than a plain <a download>) so it
+  // shows up with progress/history like any other item.
+  function handleDownloadZip() {
+    if (!show) return;
+    enqueue([{ id: show.id, name: `${show.name} (ZIP)`, downloadUrl: showZipUrl(show.id, unwatchedOnly) }]);
+  }
+
   if (error) return <ErrorState message={error} />;
   if (!show) return <LoadingSpinner />;
 
@@ -77,13 +84,13 @@ export function ShowDetail() {
             >
               {queuingAll ? "Queuing…" : "Download Entire Series"}
             </button>
-            <a
-              href={showZipUrl(show.id, unwatchedOnly)}
-              download
+            <button
+              type="button"
+              onClick={handleDownloadZip}
               className="rounded-md border border-neutral-700 px-4 py-2 text-center font-semibold text-neutral-200 transition-colors hover:bg-neutral-800"
             >
               Download as ZIP
-            </a>
+            </button>
           </div>
         </div>
       </div>

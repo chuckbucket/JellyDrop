@@ -1,27 +1,36 @@
 import { getShows } from "../api/client";
+import { AlphabetJump } from "../components/AlphabetJump";
 import { ErrorState } from "../components/ErrorState";
 import { LoadingSpinner } from "../components/LoadingSpinner";
 import { PosterCard } from "../components/PosterCard";
 import { PosterGrid } from "../components/PosterGrid";
 import { SeriesSubtitle } from "../components/SeriesSubtitle";
+import { useAlphabetJump } from "../hooks/useAlphabetJump";
+import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
 import { usePaginatedItems } from "../hooks/usePaginatedItems";
 
 /** All TV series across every TV library — browsing by individual library is still available separately. */
 export function Shows() {
-  const { items, total, loading, loadingMore, error, loadMore } = usePaginatedItems((startIndex, limit) =>
+  const { items, hasMore, loading, loadingMore, error, loadMore } = usePaginatedItems((startIndex, limit) =>
     getShows(undefined, startIndex, limit)
   );
+  const sentinelRef = useInfiniteScroll({ hasMore, loading: loadingMore, onLoadMore: loadMore });
+  const { jumpTo, jumping } = useAlphabetJump({ items, hasMore, loadMore });
 
   if (error) return <ErrorState message={error} />;
   if (loading) return <LoadingSpinner />;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
-      <h1 className="mb-6 text-2xl font-bold">TV Series</h1>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold">TV Series</h1>
+        <AlphabetJump onJump={jumpTo} disabled={jumping} />
+      </div>
       <PosterGrid>
         {items.map((series) => (
           <PosterCard
             key={series.id}
+            id={`jump-${series.id}`}
             to={`/shows/${series.id}`}
             posterUrl={series.posterUrl}
             title={series.name}
@@ -29,16 +38,9 @@ export function Shows() {
           />
         ))}
       </PosterGrid>
-      {items.length < total && (
-        <div className="mt-6 flex justify-center">
-          <button
-            type="button"
-            onClick={loadMore}
-            disabled={loadingMore}
-            className="rounded-md border border-neutral-700 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50"
-          >
-            {loadingMore ? "Loading…" : "Load More"}
-          </button>
+      {hasMore && (
+        <div ref={sentinelRef} className="flex justify-center py-8">
+          {loadingMore && <LoadingSpinner />}
         </div>
       )}
     </div>

@@ -79,8 +79,14 @@ export interface SeasonDetailDTO {
 
 export interface PagedResult<T> {
   items: T[];
+  /** Opaque cursor to pass back as the next request's startIndex — not necessarily items.length,
+   *  since some raw results may have been filtered out server-side (e.g. "ghost" library entries
+   *  with no playable media). */
   startIndex: number;
   totalRecordCount: number;
+  /** Whether another page is worth requesting. Prefer this over comparing items.length/totalRecordCount
+   *  directly — totalRecordCount reflects Jellyfin's raw count, which can exceed the filtered item count. */
+  hasMore: boolean;
 }
 
 export type SearchResultType = "movie" | "series";

@@ -4,12 +4,18 @@ import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { attachUser, requireAuthIfConfigured } from "./middleware/auth";
 import { errorHandler } from "./middleware/errorHandler";
-import { apiRouter, authRouter, healthRouter } from "./routes";
+import { apiRouter, authRouter, healthRouter, imageRouter } from "./routes";
 
 // Generous enough not to interfere with normal browsing or the download queue/zip streaming
 // (each of those is a small, bounded number of requests) — this is meant to blunt scripted abuse,
 // not to constrain a real user clicking around.
 const apiLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 300, standardHeaders: true, legacyHeaders: false });
+
+// Posters are a different volume class entirely — a single 100-item grid page fires ~100 of these
+// at once, and infinite scroll/the alphabet jump can trigger several pages back to back. They're
+// read-only, cached (see image.routes.ts's Cache-Control), and carry no credentials, so a much
+// higher ceiling here is still meaningful protection without ever bothering real browsing.
+const imageLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 3000, standardHeaders: true, legacyHeaders: false });
 
 export function createApp(staticDir: string): Express {
   const app = express();
@@ -42,6 +48,9 @@ export function createApp(staticDir: string): Express {
   app.use(attachUser);
 
   app.use("/api/auth", authRouter);
+  // Matched before the general apiRouter mount below — imageRouter only has one route
+  // ("/image/:id"), so anything else falls through to it untouched.
+  app.use("/api", imageLimiter, requireAuthIfConfigured, imageRouter);
   app.use("/api", apiLimiter, requireAuthIfConfigured, apiRouter);
 
   // Any unmatched /api/* route should return JSON, not fall through to the SPA's index.html.

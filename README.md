@@ -12,11 +12,17 @@ filesystem paths are never exposed to the browser.
 ## Features
 
 - Auto-discovers your Jellyfin movie and TV libraries
-- Poster-grid browsing: Libraries → Movies / Series → Seasons → Episodes
-- Download at three levels: single episode, entire season, or entire series
+- Poster-grid browsing: Libraries → Movies / Series → Seasons → Episodes, with infinite scroll and
+  an alphabet jump nav (`#`, A–Z) next to each list's heading
+- Movies/series with no playable media left (e.g. files deleted from disk without the library
+  folder being removed) are automatically hidden from browsing and search
+- Download at three levels: single episode, entire season, or entire series — as individual files
+  or as a single ZIP, all through the same download queue
+- Download buttons are always visible on posters, not hover-only, so they work on touchscreens
 - Site-wide search across movies and TV shows
-- A persistent download queue (bottom-right) that processes downloads one at a time automatically,
-  with Waiting / Downloading / Complete / Failed status and one-click retry
+- A persistent, unified download queue (bottom-right): every item — active, failed, cancelled, or
+  complete — lives in one list that survives reloads, with pause/resume, per-item cancel, and
+  one-click retry ("Download again" on anything already finished)
 - Every file saves to the browser's standard Downloads location — no folder prompts, nothing to
   configure, as automatic as the browser allows
 - Dark, responsive UI
@@ -121,6 +127,18 @@ This runs the Express backend (`tsx watch`, reading `JELLYFIN_URL`/`JELLYFIN_API
 repo-root `.env`) and the Vite dev server side by side. The frontend dev server proxies `/api` requests
 to the backend automatically, so just open the Vite URL it prints (typically `http://localhost:5173`).
 
+## Testing
+
+```bash
+npm test
+```
+
+Runs both workspaces' Vitest suites: the backend (services, auth/session logic, the pagination and
+caching utilities, all with the Jellyfin client mocked) and the frontend (the download queue's
+state machine — enqueue/retry/cancel/pause/localStorage persistence — and the alphabet-jump/infinite-
+scroll hooks, using `@testing-library/react` and `jsdom`). CI (`.github/workflows/docker-publish.yml`)
+runs this on every push and PR, and the Docker image is only published after it passes.
+
 ## Architecture
 
 ```
@@ -147,10 +165,20 @@ receives a direct Jellyfin URL, a filesystem path, or the original (potentially 
 filename. Download filenames are always rebuilt server-side from clean metadata
 (`Title (Year).mkv`, `Series - S01E02 - Episode Title.mkv`).
 
-Season and series downloads don't zip anything server-side (no ZIP support in this MVP). Instead,
-`GET /api/download/season/:id` and `GET /api/download/show/:id` return an ordered JSON manifest of
-episodes; the frontend's download queue walks that list and downloads each episode individually, in
-order, one at a time.
+Season and series downloads offer two forms: `GET /api/download/season/:id` / `.../show/:id` return
+an ordered JSON manifest of episodes, which the frontend's download queue walks one at a time; the
+`/zip` variants of those same routes instead stream a single ZIP built on the fly server-side
+(`archiver`, `store`-only — media files are already compressed, so nothing is re-compressed) and are
+enqueued as one item, same as everything else.
+
+Listings and search filter out any movie/series with no playable media left (Jellyfin can retain a
+library folder's entry — and any Season records under it — after every actual video file has been
+deleted, which otherwise shows up as a poster-less, empty dead end). For a paginated list, this
+filtering happens without breaking pagination: `PagedResult.startIndex`/`hasMore` reflect Jellyfin's
+own underlying cursor, not the filtered count, so a "ghost" entry landing inside a page never causes
+a real item to be silently skipped on the next page (see `backend/src/utils/paginate.ts`). Checking
+episode existence across a whole TV library is the most expensive part of this, so it's cached for a
+minute per library (`backend/src/utils/ttlCache.ts`) rather than recomputed on every page.
 
 ## API
 

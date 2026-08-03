@@ -27,6 +27,13 @@ export function SeasonRow({ seriesId, season }: SeasonRowProps) {
     }
   }
 
+  // Routed through the same queue as everything else (rather than a plain <a download>) so it
+  // shows up with progress/history like any other item — the actual saved filename still comes
+  // from the server's Content-Disposition on the zip response, this is just the queue's display label.
+  function handleDownloadZip() {
+    enqueue([{ id: season.id, name: `${season.name} (ZIP)`, downloadUrl: seasonZipUrl(season.id, unwatchedOnly) }]);
+  }
+
   return (
     <div className="flex items-center gap-3 rounded-lg border border-neutral-800 bg-[var(--color-jelly-surface)] px-4 py-3 transition-colors hover:bg-[var(--color-jelly-surface-hover)]">
       <Link to={`/shows/${seriesId}/season/${season.id}`} className="flex flex-1 items-center gap-3">
@@ -67,13 +74,13 @@ export function SeasonRow({ seriesId, season }: SeasonRowProps) {
           >
             {queuing ? "Queuing…" : "Download Season"}
           </button>
-          <a
-            href={seasonZipUrl(season.id, unwatchedOnly)}
-            download
+          <button
+            type="button"
+            onClick={handleDownloadZip}
             className="rounded-md border border-neutral-700 px-3 py-1.5 text-center text-sm font-semibold text-neutral-200 transition-colors hover:bg-neutral-800"
           >
             As ZIP
-          </a>
+          </button>
         </div>
       </div>
     </div>

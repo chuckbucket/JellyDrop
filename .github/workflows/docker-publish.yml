@@ -26,7 +26,7 @@ jobs:
         run: npm run build
 
       - name: Test
-        run: npm run test --workspace=backend
+        run: npm test
 
   build-and-push:
     needs: test

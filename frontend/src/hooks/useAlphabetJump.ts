@@ -8,9 +8,9 @@ interface JumpableItem {
 
 interface UseAlphabetJumpOptions<T extends JumpableItem> {
   items: T[];
-  total: number;
-  /** Returns the newly-fetched page (see usePaginatedItems) — an empty array means nothing left to load. */
-  loadMore: () => Promise<T[]>;
+  hasMore: boolean;
+  /** Returns the newly-fetched page and the post-fetch hasMore (see usePaginatedItems). */
+  loadMore: () => Promise<{ items: T[]; hasMore: boolean }>;
 }
 
 function findFirstAtOrAfter(list: JumpableItem[], letterIndex: number): JumpableItem | undefined {
@@ -23,7 +23,7 @@ function findFirstAtOrAfter(list: JumpableItem[], letterIndex: number): Jumpable
  * time, so this loads additional pages on demand until the target is found or the list is
  * exhausted, then scrolls the matching element into view.
  */
-export function useAlphabetJump<T extends JumpableItem>({ items, total, loadMore }: UseAlphabetJumpOptions<T>) {
+export function useAlphabetJump<T extends JumpableItem>({ items, hasMore, loadMore }: UseAlphabetJumpOptions<T>) {
   const [jumping, setJumping] = useState(false);
 
   async function jumpTo(letter: string) {
@@ -33,11 +33,12 @@ export function useAlphabetJump<T extends JumpableItem>({ items, total, loadMore
     setJumping(true);
     try {
       let known: JumpableItem[] = items;
+      let more = hasMore;
       let target = findFirstAtOrAfter(known, letterIndex);
-      while (!target && known.length < total) {
-        const newPage = await loadMore();
-        if (newPage.length === 0) break;
-        known = [...known, ...newPage];
+      while (!target && more) {
+        const result = await loadMore();
+        known = [...known, ...result.items];
+        more = result.hasMore;
         target = findFirstAtOrAfter(known, letterIndex);
       }
       if (target) {

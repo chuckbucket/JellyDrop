@@ -9,11 +9,13 @@ interface PosterCardProps {
   action?: ReactNode;
   /** Small, always-visible top-left chip (e.g. a "Watched" mark) — unlike `action`, not hover-gated. */
   badge?: ReactNode;
+  /** DOM id — used as a scroll target by the alphabet jump nav. */
+  id?: string;
 }
 
-export function PosterCard({ to, posterUrl, title, subtitle, action, badge }: PosterCardProps) {
+export function PosterCard({ to, posterUrl, title, subtitle, action, badge, id }: PosterCardProps) {
   return (
-    <Link to={to} className="group flex flex-col gap-2">
+    <Link id={id} to={to} className="group flex flex-col gap-2">
       <div className="relative aspect-2/3 overflow-hidden rounded-lg bg-neutral-800 shadow-md transition-transform duration-200 group-hover:scale-[1.03] group-hover:shadow-xl">
         <img src={posterUrl} alt={title} loading="lazy" className="h-full w-full object-cover" />
         {badge && <div className="absolute top-2 left-2">{badge}</div>}

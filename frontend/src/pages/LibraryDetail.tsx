@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { LibraryDTO, MovieDTO, SeriesDTO } from "@shared/types";
 import { getLibrary, movieDownloadUrl } from "../api/client";
@@ -8,6 +8,7 @@ import { LoadingSpinner } from "../components/LoadingSpinner";
 import { PosterCard } from "../components/PosterCard";
 import { PosterGrid } from "../components/PosterGrid";
 import { SeriesSubtitle } from "../components/SeriesSubtitle";
+import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
 
 const PAGE_SIZE = 100;
 
@@ -15,9 +16,12 @@ export function LibraryDetail() {
   const { id } = useParams<{ id: string }>();
   const [library, setLibrary] = useState<LibraryDTO | null>(null);
   const [items, setItems] = useState<Array<MovieDTO | SeriesDTO>>([]);
-  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
+  // The backend's own pagination cursor, not items.length — see usePaginatedItems for why: some
+  // raw results (ghost library entries with no playable media) may already be filtered out.
+  const cursorRef = useRef(0);
 
   useEffect(() => {
     if (!id) return;
@@ -27,7 +31,8 @@ export function LibraryDetail() {
       .then((result) => {
         setLibrary(result.library);
         setItems(result.items);
-        setTotal(result.totalRecordCount);
+        cursorRef.current = result.startIndex;
+        setHasMore(result.hasMore);
       })
       .catch((err: Error) => setError(err.message));
   }, [id]);
@@ -36,12 +41,16 @@ export function LibraryDetail() {
     if (!id) return;
     setLoadingMore(true);
     try {
-      const result = await getLibrary(id, items.length, PAGE_SIZE);
+      const result = await getLibrary(id, cursorRef.current, PAGE_SIZE);
       setItems((prev) => [...prev, ...result.items]);
+      cursorRef.current = result.startIndex;
+      setHasMore(result.hasMore);
     } finally {
       setLoadingMore(false);
     }
   }
+
+  const sentinelRef = useInfiniteScroll({ hasMore, loading: loadingMore, onLoadMore: loadMore });
 
   if (error) return <ErrorState message={error} />;
   if (!library) return <LoadingSpinner />;
@@ -71,16 +80,9 @@ export function LibraryDetail() {
           )
         )}
       </PosterGrid>
-      {items.length < total && (
-        <div className="mt-6 flex justify-center">
-          <button
-            type="button"
-            onClick={loadMore}
-            disabled={loadingMore}
-            className="rounded-md border border-neutral-700 px-4 py-2 text-sm text-neutral-100 hover:bg-neutral-800 disabled:opacity-50"
-          >
-            {loadingMore ? "Loading…" : "Load More"}
-          </button>
+      {hasMore && (
+        <div ref={sentinelRef} className="flex justify-center py-8">
+          {loadingMore && <LoadingSpinner />}
         </div>
       )}
     </div>
