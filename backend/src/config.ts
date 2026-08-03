@@ -15,6 +15,11 @@ export interface Config {
   /** Marks the session cookie Secure. Off by default because the README-documented deployment path
    *  is plain HTTP on a LAN (e.g. http://192.168.x.x:8080) — Secure cookies are silently dropped there. */
   cookieSecure: boolean;
+  /** Whether a `quality` param on download routes is honored at all. Defaults on since it only ever
+   *  does anything when a user explicitly picks a non-"Original" quality in the UI — there's no
+   *  surprise load on an install that never touches the new control. Set false to fully disable
+   *  asking Jellyfin to transcode, e.g. if the admin doesn't want JellyDrop able to trigger that. */
+  transcodeEnabled: boolean;
 }
 
 function required(name: string): string {
@@ -39,4 +44,5 @@ export const config: Config = {
   port: Number(process.env.PORT) || 8080,
   authMode: parseAuthMode(),
   cookieSecure: process.env.COOKIE_SECURE === "true",
+  transcodeEnabled: process.env.TRANSCODE_ENABLED !== "false",
 };

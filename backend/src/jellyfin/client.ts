@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { config } from "../config";
 import type { JellyfinItem, JellyfinItemsResponse, JellyfinPublicUser, JellyfinVirtualFolder } from "./types";
 
@@ -89,6 +90,30 @@ class JellyfinClient {
     const headers: Record<string, string> = this.authHeaders();
     if (incomingRange) headers["Range"] = incomingRange;
     return fetch(this.buildUrl(path), { headers });
+  }
+
+  /**
+   * Asks Jellyfin's own transcoder to re-encode an item down to `targetHeight` and stream the
+   * result back as a single continuous file (not HLS segments) — the same progressive
+   * transcode-to-a-stream endpoint real clients fall back to when they can't direct-play. Output
+   * is always Matroska: it streams cleanly in one forward pass, unlike MP4's `moov`-atom concerns.
+   * A random per-request `playSessionId`/fixed `deviceId` are only there because Jellyfin requires
+   * them to identify the encoding job; there's no session lifecycle to manage beyond that —
+   * Jellyfin tears down the ffmpeg process when the response connection closes, same as any other
+   * ad-hoc stream. No Range support: a live transcode can't seek, so it's never forwarded here.
+   */
+  async streamTranscodedProxy(itemId: string, targetHeight: number, targetBitrateBps: number): Promise<Response> {
+    const url = this.buildUrl(`/Videos/${itemId}/stream`, {
+      static: "false",
+      container: "mkv",
+      videoCodec: "h264",
+      audioCodec: "aac",
+      maxHeight: targetHeight,
+      videoBitRate: targetBitrateBps,
+      deviceId: "jellydrop",
+      playSessionId: randomUUID(),
+    });
+    return fetch(url, { headers: this.authHeaders() });
   }
 
   /**

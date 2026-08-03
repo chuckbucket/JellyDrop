@@ -5,6 +5,9 @@ interface PipeOptions {
   /** Overrides whatever Content-Disposition Jellyfin sent, so we never leak source filenames. */
   filename?: string;
   cacheControl?: string;
+  /** Set when the underlying response is a live transcode: unseekable and of unknown final size —
+   *  Content-Length/Content-Range/Accept-Ranges are never forwarded even if Jellyfin happens to send them. */
+  transcoded?: boolean;
 }
 
 /** Streams a fetch Response body straight into an Express response without buffering it in memory. */
@@ -22,9 +25,11 @@ export function pipeJellyfinResponse(expressRes: ExpressResponse, jellyfinRes: R
   const acceptRanges = jellyfinRes.headers.get("accept-ranges");
 
   if (contentType) expressRes.setHeader("Content-Type", contentType);
-  if (contentLength) expressRes.setHeader("Content-Length", contentLength);
-  if (contentRange) expressRes.setHeader("Content-Range", contentRange);
-  if (acceptRanges) expressRes.setHeader("Accept-Ranges", acceptRanges);
+  if (!options.transcoded) {
+    if (contentLength) expressRes.setHeader("Content-Length", contentLength);
+    if (contentRange) expressRes.setHeader("Content-Range", contentRange);
+    if (acceptRanges) expressRes.setHeader("Accept-Ranges", acceptRanges);
+  }
   if (options.cacheControl) expressRes.setHeader("Cache-Control", options.cacheControl);
   if (options.filename) {
     const safeName = options.filename.replace(/"/g, "");

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import type { SearchResultDTO } from "@shared/types";
-import { movieDownloadUrl, search } from "../api/client";
-import { DownloadButton } from "../components/DownloadButton";
+import { search } from "../api/client";
 import { LoadingSpinner } from "../components/LoadingSpinner";
+import { MoviePosterCard } from "../components/MoviePosterCard";
 import { PosterCard } from "../components/PosterCard";
 import { PosterGrid } from "../components/PosterGrid";
 
@@ -52,14 +52,7 @@ export function Search() {
           <h2 className="mb-3 text-xl font-semibold">Movies</h2>
           <PosterGrid>
             {movies.map((result) => (
-              <PosterCard
-                key={result.id}
-                to={`/movies/${result.id}`}
-                posterUrl={result.posterUrl}
-                title={result.name}
-                subtitle={result.year ? String(result.year) : undefined}
-                action={<DownloadButton id={result.id} name={result.name} downloadUrl={movieDownloadUrl(result.id)} />}
-              />
+              <MoviePosterCard key={result.id} id={result.id} name={result.name} year={result.year} posterUrl={result.posterUrl} />
             ))}
           </PosterGrid>
         </section>

@@ -1,7 +1,9 @@
-import type { EpisodeDTO } from "@shared/types";
-import { episodeDownloadUrl } from "../api/client";
+import { useState } from "react";
+import type { EpisodeDTO, TranscodeQuality } from "@shared/types";
+import { episodeDownloadUrl, queueId } from "../api/client";
 import { formatBytes } from "../utils/format";
 import { DownloadButton } from "./DownloadButton";
+import { QualitySelect } from "./QualitySelect";
 import { WatchedBadge } from "./WatchedBadge";
 
 interface EpisodeRowProps {
@@ -9,6 +11,7 @@ interface EpisodeRowProps {
 }
 
 export function EpisodeRow({ episode }: EpisodeRowProps) {
+  const [quality, setQuality] = useState<TranscodeQuality>("original");
   const label = episode.indexNumber !== null ? `${episode.indexNumber}. ${episode.name}` : episode.name;
   const metaParts = [episode.resolution, episode.sizeBytes !== null ? formatBytes(episode.sizeBytes) : null].filter(
     (part): part is string => part !== null
@@ -23,12 +26,15 @@ export function EpisodeRow({ episode }: EpisodeRowProps) {
         </div>
         {metaParts.length > 0 && <p className="text-sm text-neutral-400">{metaParts.join(" · ")}</p>}
       </div>
-      <DownloadButton
-        id={episode.id}
-        name={episode.name}
-        downloadUrl={episodeDownloadUrl(episode.id)}
-        label="Download Episode"
-      />
+      <div className="flex items-center gap-2">
+        <QualitySelect value={quality} onChange={setQuality} />
+        <DownloadButton
+          id={queueId(episode.id, quality)}
+          name={episode.name}
+          downloadUrl={episodeDownloadUrl(episode.id, quality)}
+          label="Download Episode"
+        />
+      </div>
     </div>
   );
 }

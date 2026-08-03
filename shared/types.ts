@@ -109,6 +109,9 @@ export interface DownloadManifestDTO {
   items: DownloadManifestItem[];
 }
 
+/** "original" = no transcoding, served as-is. Others request Jellyfin transcode down to that height. */
+export type TranscodeQuality = "original" | "1080p" | "720p" | "480p" | "360p";
+
 export type AuthMode = "open" | "required";
 
 export interface UserDTO {

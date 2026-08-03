@@ -220,24 +220,23 @@ export async function getSeasonDetail(seasonId: string, userId?: string): Promis
   };
 }
 
+/** Filename-building fields plus MediaSources/RunTimeTicks (resolution + duration, for transcode skip-logic). */
+const DOWNLOAD_EPISODE_FIELDS = ["Container", "SeriesName", "ParentIndexNumber", "IndexNumber", "MediaSources", "RunTimeTicks"];
+
 /** Ordered episodes (with filename-building fields) for one season — the basis for the season download manifest. */
 export async function getSeasonEpisodesForDownload(seasonId: string, userId?: string): Promise<JellyfinItem[] | null> {
   const seasonItems = await jellyfinClient.getItemsByIds([seasonId], ["SeriesId"]);
   const season = seasonItems[0];
   if (!season?.SeriesId) return null;
 
-  const fields = userId
-    ? ["Container", "SeriesName", "ParentIndexNumber", "IndexNumber", "UserData"]
-    : ["Container", "SeriesName", "ParentIndexNumber", "IndexNumber"];
+  const fields = userId ? [...DOWNLOAD_EPISODE_FIELDS, "UserData"] : DOWNLOAD_EPISODE_FIELDS;
   const episodes = await jellyfinClient.getEpisodes(season.SeriesId, { seasonId, fields, userId });
   return [...episodes].filter(hasMediaFile).sort(byIndexNumber);
 }
 
 /** Ordered episodes across every season of a series — the basis for the "Download Entire Series" manifest. */
 export async function getAllEpisodesForDownload(seriesId: string, userId?: string): Promise<JellyfinItem[]> {
-  const fields = userId
-    ? ["Container", "SeriesName", "ParentIndexNumber", "IndexNumber", "UserData"]
-    : ["Container", "SeriesName", "ParentIndexNumber", "IndexNumber"];
+  const fields = userId ? [...DOWNLOAD_EPISODE_FIELDS, "UserData"] : DOWNLOAD_EPISODE_FIELDS;
   const episodes = await jellyfinClient.getEpisodes(seriesId, { fields, userId });
   return [...episodes].filter(hasMediaFile).sort((a, b) => {
     const seasonDiff = (a.ParentIndexNumber ?? 0) - (b.ParentIndexNumber ?? 0);

@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { LibraryDTO, MovieDTO, SeriesDTO } from "@shared/types";
-import { getLibrary, movieDownloadUrl } from "../api/client";
-import { DownloadButton } from "../components/DownloadButton";
+import { getLibrary } from "../api/client";
 import { ErrorState } from "../components/ErrorState";
 import { LoadingSpinner } from "../components/LoadingSpinner";
+import { MoviePosterCard } from "../components/MoviePosterCard";
 import { PosterCard } from "../components/PosterCard";
 import { PosterGrid } from "../components/PosterGrid";
 import { SeriesSubtitle } from "../components/SeriesSubtitle";
@@ -61,14 +61,7 @@ export function LibraryDetail() {
       <PosterGrid>
         {items.map((item) =>
           library.type === "movies" ? (
-            <PosterCard
-              key={item.id}
-              to={`/movies/${item.id}`}
-              posterUrl={item.posterUrl}
-              title={item.name}
-              subtitle={item.year ? String(item.year) : undefined}
-              action={<DownloadButton id={item.id} name={item.name} downloadUrl={movieDownloadUrl(item.id)} />}
-            />
+            <MoviePosterCard key={item.id} id={item.id} name={item.name} year={item.year} posterUrl={item.posterUrl} />
           ) : (
             <PosterCard
               key={item.id}

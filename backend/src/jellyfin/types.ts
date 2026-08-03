@@ -45,6 +45,8 @@ export interface JellyfinItem {
   MediaSources?: JellyfinMediaSource[];
   /** Only populated when the request included a UserId — watched/resume state is per-user. */
   UserData?: JellyfinUserData;
+  /** 100ns units. Used to estimate bitrate (Size / duration) for transcode skip-logic. */
+  RunTimeTicks?: number;
 }
 
 export interface JellyfinItemsResponse {

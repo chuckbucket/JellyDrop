@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import type { SeasonSummaryDTO } from "@shared/types";
-import { getSeasonManifest, seasonZipUrl } from "../api/client";
+import type { SeasonSummaryDTO, TranscodeQuality } from "@shared/types";
+import { getSeasonManifest, queueId, seasonZipUrl } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { useDownloadQueue } from "../context/DownloadQueueContext";
 import { formatBytes } from "../utils/format";
+import { QualitySelect } from "./QualitySelect";
 
 interface SeasonRowProps {
   seriesId: string;
@@ -16,11 +17,12 @@ export function SeasonRow({ seriesId, season }: SeasonRowProps) {
   const { enqueue } = useDownloadQueue();
   const [queuing, setQueuing] = useState(false);
   const [unwatchedOnly, setUnwatchedOnly] = useState(false);
+  const [quality, setQuality] = useState<TranscodeQuality>("original");
 
   async function handleDownloadSeason() {
     setQueuing(true);
     try {
-      const manifest = await getSeasonManifest(season.id, unwatchedOnly);
+      const manifest = await getSeasonManifest(season.id, unwatchedOnly, quality);
       enqueue(manifest.items);
     } finally {
       setQueuing(false);
@@ -31,7 +33,9 @@ export function SeasonRow({ seriesId, season }: SeasonRowProps) {
   // shows up with progress/history like any other item — the actual saved filename still comes
   // from the server's Content-Disposition on the zip response, this is just the queue's display label.
   function handleDownloadZip() {
-    enqueue([{ id: season.id, name: `${season.name} (ZIP)`, downloadUrl: seasonZipUrl(season.id, unwatchedOnly) }]);
+    enqueue([
+      { id: queueId(season.id, quality), name: `${season.name} (ZIP)`, downloadUrl: seasonZipUrl(season.id, unwatchedOnly, quality) },
+    ]);
   }
 
   return (
@@ -65,6 +69,7 @@ export function SeasonRow({ seriesId, season }: SeasonRowProps) {
             Unwatched only
           </label>
         )}
+        <QualitySelect value={quality} onChange={setQuality} />
         <div className="flex flex-col gap-1.5 sm:flex-row">
           <button
             type="button"

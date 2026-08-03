@@ -19,9 +19,14 @@ export function getFileSizeBytes(item: JellyfinItem): number | null {
   return item.MediaSources?.[0]?.Size ?? null;
 }
 
+/** Raw video stream height in pixels — used both for the friendly label below and transcode skip-logic. */
+export function getVideoHeight(item: JellyfinItem): number | null {
+  return item.MediaSources?.[0]?.MediaStreams?.find((stream) => stream.Type === "Video")?.Height ?? null;
+}
+
 /** A friendly label ("1080p", "4K") derived from the video stream's height — not Jellyfin's raw stream data. */
 export function getResolutionLabel(item: JellyfinItem): string | null {
-  const height = item.MediaSources?.[0]?.MediaStreams?.find((stream) => stream.Type === "Video")?.Height;
+  const height = getVideoHeight(item);
   if (!height) return null;
   if (height >= 2160) return "4K";
   if (height >= 1440) return "1440p";

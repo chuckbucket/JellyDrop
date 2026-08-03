@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import type { ShowDetailDTO } from "@shared/types";
-import { getShow, getShowManifest, showZipUrl } from "../api/client";
+import type { ShowDetailDTO, TranscodeQuality } from "@shared/types";
+import { getShow, getShowManifest, queueId, showZipUrl } from "../api/client";
 import { ErrorState } from "../components/ErrorState";
 import { LoadingSpinner } from "../components/LoadingSpinner";
+import { QualitySelect } from "../components/QualitySelect";
 import { SeasonRow } from "../components/SeasonRow";
 import { useAuth } from "../context/AuthContext";
 import { useDownloadQueue } from "../context/DownloadQueueContext";
@@ -16,6 +17,7 @@ export function ShowDetail() {
   const [error, setError] = useState<string | null>(null);
   const [queuingAll, setQueuingAll] = useState(false);
   const [unwatchedOnly, setUnwatchedOnly] = useState(false);
+  const [quality, setQuality] = useState<TranscodeQuality>("original");
   const { enqueue } = useDownloadQueue();
 
   useEffect(() => {
@@ -29,7 +31,7 @@ export function ShowDetail() {
     if (!id) return;
     setQueuingAll(true);
     try {
-      const manifest = await getShowManifest(id, unwatchedOnly);
+      const manifest = await getShowManifest(id, unwatchedOnly, quality);
       enqueue(manifest.items);
     } finally {
       setQueuingAll(false);
@@ -40,7 +42,9 @@ export function ShowDetail() {
   // shows up with progress/history like any other item.
   function handleDownloadZip() {
     if (!show) return;
-    enqueue([{ id: show.id, name: `${show.name} (ZIP)`, downloadUrl: showZipUrl(show.id, unwatchedOnly) }]);
+    enqueue([
+      { id: queueId(show.id, quality), name: `${show.name} (ZIP)`, downloadUrl: showZipUrl(show.id, unwatchedOnly, quality) },
+    ]);
   }
 
   if (error) return <ErrorState message={error} />;
@@ -75,6 +79,7 @@ export function ShowDetail() {
               Unwatched only
             </label>
           )}
+          <QualitySelect value={quality} onChange={setQuality} className="w-fit" />
           <div className="flex w-fit flex-col gap-2 sm:flex-row">
             <button
               type="button"

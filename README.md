@@ -2,9 +2,10 @@
 
 A lightweight download portal for [Jellyfin](https://jellyfin.org/). JellyDrop gives you a clean,
 Netflix-style interface for browsing your Jellyfin libraries and downloading media for offline use —
-nothing else. No transcoding, no playback. Just posters and a download button. Logging in with a
-Jellyfin account is optional and only unlocks personalization (watched marks, recently watched,
-unwatched-only downloads) — see [Optional login](#optional-login) below.
+no playback, just posters and a download button, with an optional quality selector if you want a
+smaller file. Logging in with a Jellyfin account is optional and only unlocks personalization
+(watched marks, recently watched, unwatched-only downloads) — see [Optional login](#optional-login)
+below.
 
 Only playable media files are ever downloadable. `.nfo` files, artwork, subtitles, metadata, and
 filesystem paths are never exposed to the browser.
@@ -18,6 +19,10 @@ filesystem paths are never exposed to the browser.
   folder being removed) are automatically hidden from browsing and search
 - Download at three levels: single episode, entire season, or entire series — as individual files
   or as a single ZIP, all through the same download queue
+- Season/series ZIPs include a `folder.jpg` in each folder (from Jellyfin's own poster art), so the
+  extracted files show up with cover art in Kodi, VLC, DLNA servers, and most file browsers
+- An optional quality selector (Original/1080p/720p/480p/360p) next to every download control —
+  see [Transcoding](#transcoding) below
 - Download buttons are always visible on posters, not hover-only, so they work on touchscreens
 - Site-wide search across movies and TV shows
 - A persistent, unified download queue (bottom-right): every item — active, failed, cancelled, or
@@ -41,6 +46,7 @@ JellyDrop is configured with environment variables only — there is no frontend
 | `PORT`             | Port JellyDrop listens on (default `8080`)                                        |
 | `AUTH_MODE`        | `open` (default) — login is optional; `required` — every page needs a login       |
 | `COOKIE_SECURE`    | `true`/`false` (default `false`). Set `true` when serving JellyDrop over HTTPS    |
+| `TRANSCODE_ENABLED`| `true`/`false` (default `true`). Set `false` to disable the quality selector entirely |
 
 Copy `.env.example` to `.env` and fill in your values:
 
@@ -76,6 +82,29 @@ anything without first signing in with a Jellyfin account.
 
 Sessions are kept in memory on the server (not persisted to disk), so a restart/redeploy logs
 everyone out — just log back in.
+
+## Transcoding
+
+Every download control (movie posters, episode rows, season/series downloads, and their ZIP
+equivalents) has a quality selector: **Original / 1080p / 720p / 480p / 360p**. Picking anything
+but Original asks your **Jellyfin server itself** to transcode the file down to that resolution —
+JellyDrop doesn't run its own ffmpeg or need any hardware access of its own. This keeps JellyDrop's
+Docker image exactly as small as it's always been, at the cost of the transcode's CPU/GPU load
+running on the Jellyfin server rather than JellyDrop's container (usually a non-issue, since they
+typically share the same host).
+
+Because of this, hardware-accelerated transcoding is entirely a function of your **Jellyfin
+server's own** Dashboard → Playback → Transcoding configuration — if Jellyfin has hardware
+acceleration set up there, JellyDrop's transcoded downloads use it automatically; if not, Jellyfin
+falls back to software encoding, same as it would for a client that can't direct-play.
+
+For a whole-season or whole-series ZIP with episodes of mixed resolutions, each episode is decided
+independently: one already at or below the target resolution (or already encoded at a low enough
+bitrate that transcoding wouldn't meaningfully shrink it) is added to the ZIP untouched, while only
+the episodes that actually exceed the target get transcoded.
+
+Set `TRANSCODE_ENABLED=false` to remove the quality selector's effect entirely (every download is
+always served as-is, regardless of what quality a client requests).
 
 ## Running with Docker (recommended)
 
@@ -171,7 +200,12 @@ an ordered JSON manifest of episodes, which the frontend's download queue walks 
 (`archiver`, `store`-only — media files are already compressed, so nothing is re-compressed) and are
 enqueued as one item, same as everything else. A full-series ZIP groups episodes into `Season 01/`,
 `Season 02/`, etc. subfolders inside the archive; a season ZIP only has one season in it, so its
-entries stay flat.
+entries stay flat. Each folder in the archive (the ZIP root, and every season subfolder in a
+full-series ZIP) also gets one `folder.jpg`, proxied straight from Jellyfin's own poster art for
+that series/season — the filename Kodi, VLC, DLNA servers, and most file browsers already look for,
+so the extracted files show up with cover art with no extra tagging. A series/season with no poster
+set in Jellyfin just silently gets no `folder.jpg` for that folder, same as a missing episode file
+is already silently skipped.
 
 Listings and search filter out any movie/series with no playable media left (Jellyfin can retain a
 library folder's entry — and any Season records under it — after every actual video file has been
@@ -194,10 +228,12 @@ minute per library (`backend/src/utils/ttlCache.ts`) rather than recomputed on e
 | `GET /api/show/:id`             | A series' seasons, with episode counts                                                          |
 | `GET /api/season/:id`           | A season's episode list                                                                         |
 | `GET /api/search?q=`            | Search movies and series                                                                        |
-| `GET /api/download/movie/:id`   | Streams the movie's media file                                                                  |
-| `GET /api/download/episode/:id` | Streams the episode's media file                                                                |
-| `GET /api/download/season/:id`  | Ordered download manifest for a season (`?unwatchedOnly=true` when logged in)                   |
-| `GET /api/download/show/:id`    | Ordered download manifest for an entire series (`?unwatchedOnly=true` when logged in)           |
+| `GET /api/download/movie/:id`   | Streams the movie's media file (`?quality=1080p\|720p\|480p\|360p` to transcode)                 |
+| `GET /api/download/episode/:id` | Streams the episode's media file (`?quality=1080p\|720p\|480p\|360p` to transcode)               |
+| `GET /api/download/season/:id`  | Ordered download manifest for a season (`?unwatchedOnly=true` when logged in, `?quality=...`)    |
+| `GET /api/download/show/:id`    | Ordered download manifest for an entire series (`?unwatchedOnly=true` when logged in, `?quality=...`) |
+| `GET /api/download/season/:id/zip` | Streams a season as a single ZIP (`?unwatchedOnly=true`, `?quality=...`)                      |
+| `GET /api/download/show/:id/zip`   | Streams an entire series as a single ZIP (`?unwatchedOnly=true`, `?quality=...`)              |
 | `GET /api/image/:id`            | Poster image proxy (keeps the Jellyfin API key server-side)                                     |
 | `POST /api/auth/login`          | Log in with a Jellyfin username/password (password may be empty for passwordless accounts)      |
 | `POST /api/auth/logout`         | Ends the current session                                                                        |

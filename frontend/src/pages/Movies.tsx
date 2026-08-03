@@ -1,11 +1,9 @@
-import { getMovies, movieDownloadUrl } from "../api/client";
+import { getMovies } from "../api/client";
 import { AlphabetJump } from "../components/AlphabetJump";
-import { DownloadButton } from "../components/DownloadButton";
 import { ErrorState } from "../components/ErrorState";
 import { LoadingSpinner } from "../components/LoadingSpinner";
-import { PosterCard } from "../components/PosterCard";
+import { MoviePosterCard } from "../components/MoviePosterCard";
 import { PosterGrid } from "../components/PosterGrid";
-import { WatchedBadge } from "../components/WatchedBadge";
 import { useAlphabetJump } from "../hooks/useAlphabetJump";
 import { useInfiniteScroll } from "../hooks/useInfiniteScroll";
 import { usePaginatedItems } from "../hooks/usePaginatedItems";
@@ -29,15 +27,14 @@ export function Movies() {
       </div>
       <PosterGrid>
         {items.map((movie) => (
-          <PosterCard
+          <MoviePosterCard
             key={movie.id}
-            id={`jump-${movie.id}`}
-            to={`/movies/${movie.id}`}
+            jumpId={`jump-${movie.id}`}
+            id={movie.id}
+            name={movie.name}
+            year={movie.year}
             posterUrl={movie.posterUrl}
-            title={movie.name}
-            subtitle={movie.year ? String(movie.year) : undefined}
-            badge={movie.watched ? <WatchedBadge /> : undefined}
-            action={<DownloadButton id={movie.id} name={movie.name} downloadUrl={movieDownloadUrl(movie.id)} />}
+            watched={movie.watched}
           />
         ))}
       </PosterGrid>

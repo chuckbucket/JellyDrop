@@ -10,6 +10,7 @@ import type {
   SeasonDetailDTO,
   SeriesDTO,
   ShowDetailDTO,
+  TranscodeQuality,
   UserDTO,
 } from "@shared/types";
 
@@ -85,31 +86,48 @@ export function search(query: string): Promise<SearchResultDTO[]> {
   return getJson(`/api/search?q=${encodeURIComponent(query)}`);
 }
 
-export function getSeasonManifest(seasonId: string, unwatchedOnly = false): Promise<DownloadManifestDTO> {
-  return getJson(`/api/download/season/${seasonId}${unwatchedOnly ? "?unwatchedOnly=true" : ""}`);
+function downloadQuery(params: { unwatchedOnly?: boolean; quality?: TranscodeQuality }): string {
+  const qs = new URLSearchParams();
+  if (params.unwatchedOnly) qs.set("unwatchedOnly", "true");
+  if (params.quality && params.quality !== "original") qs.set("quality", params.quality);
+  const s = qs.toString();
+  return s ? `?${s}` : "";
 }
 
-export function getShowManifest(seriesId: string, unwatchedOnly = false): Promise<DownloadManifestDTO> {
-  return getJson(`/api/download/show/${seriesId}${unwatchedOnly ? "?unwatchedOnly=true" : ""}`);
+/**
+ * The download queue de-dupes purely by `id` (see DownloadQueueContext) — so queuing the same
+ * media at two different qualities before the first resolves needs distinct ids, or the second
+ * enqueue silently no-ops. `id` is otherwise just an opaque display/dedup key, so this is safe.
+ */
+export function queueId(id: string, quality: TranscodeQuality): string {
+  return quality === "original" ? id : `${id}::${quality}`;
 }
 
-export function movieDownloadUrl(movieId: string): string {
-  return `/api/download/movie/${movieId}`;
+export function getSeasonManifest(seasonId: string, unwatchedOnly = false, quality: TranscodeQuality = "original"): Promise<DownloadManifestDTO> {
+  return getJson(`/api/download/season/${seasonId}${downloadQuery({ unwatchedOnly, quality })}`);
 }
 
-export function episodeDownloadUrl(episodeId: string): string {
-  return `/api/download/episode/${episodeId}`;
+export function getShowManifest(seriesId: string, unwatchedOnly = false, quality: TranscodeQuality = "original"): Promise<DownloadManifestDTO> {
+  return getJson(`/api/download/show/${seriesId}${downloadQuery({ unwatchedOnly, quality })}`);
+}
+
+export function movieDownloadUrl(movieId: string, quality: TranscodeQuality = "original"): string {
+  return `/api/download/movie/${movieId}${downloadQuery({ quality })}`;
+}
+
+export function episodeDownloadUrl(episodeId: string, quality: TranscodeQuality = "original"): string {
+  return `/api/download/episode/${episodeId}${downloadQuery({ quality })}`;
 }
 
 /** A single native browser download of every episode bundled into one zip — bypasses the JS queue
  *  entirely (no per-file progress, no history tracking), trading that for one dialog instead of one
  *  per episode. */
-export function seasonZipUrl(seasonId: string, unwatchedOnly = false): string {
-  return `/api/download/season/${seasonId}/zip${unwatchedOnly ? "?unwatchedOnly=true" : ""}`;
+export function seasonZipUrl(seasonId: string, unwatchedOnly = false, quality: TranscodeQuality = "original"): string {
+  return `/api/download/season/${seasonId}/zip${downloadQuery({ unwatchedOnly, quality })}`;
 }
 
-export function showZipUrl(seriesId: string, unwatchedOnly = false): string {
-  return `/api/download/show/${seriesId}/zip${unwatchedOnly ? "?unwatchedOnly=true" : ""}`;
+export function showZipUrl(seriesId: string, unwatchedOnly = false, quality: TranscodeQuality = "original"): string {
+  return `/api/download/show/${seriesId}/zip${downloadQuery({ unwatchedOnly, quality })}`;
 }
 
 export function getAuthStatus(): Promise<AuthStatusDTO> {
