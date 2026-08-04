@@ -141,6 +141,50 @@ interface CurrentStreamRef {
   current: Readable | null;
 }
 
+/** How many times to re-request a single episode's source before giving up on it. Safe to retry
+ *  freely at this stage — nothing has been appended to the archive yet, so a retry here can never
+ *  produce a duplicate/corrupt zip entry (contrast with a stall partway through appendAndDrain,
+ *  where bytes may already be written). */
+const EPISODE_FETCH_MAX_ATTEMPTS = 3;
+/** Pause between fetch retries — gives Jellyfin a beat to free up transcode slots that a previous
+ *  episode's failure in the same zip may have left exhausted (see appendAndDrain's docstring). */
+const EPISODE_FETCH_RETRY_DELAY_MS = 3_000;
+/** If an already-open episode stream goes this long without delivering a single chunk, it's
+ *  treated as stalled and destroyed rather than left to hang forever. This is what actually fixes
+ *  a zip that "looks like it's still going" in the logs but whose downloaded size has stopped
+ *  growing: a stream can stay open with no data and fire neither 'error' nor 'end' nor 'close' on
+ *  its own, so without an idle timer the loop just waits on it indefinitely. */
+const EPISODE_STALL_TIMEOUT_MS = 30_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Retries a single episode's upstream fetch up to EPISODE_FETCH_MAX_ATTEMPTS times, logging each
+ * failed attempt, before giving up and returning null. `fetchOnce` must issue a *fresh* request
+ * each call (a new playSessionId for a transcode) — retrying by re-reading an already-failed
+ * Response isn't possible.
+ */
+async function fetchEpisodeSource(fetchOnce: () => Promise<Response>, context: string): Promise<Response | null> {
+  let lastReason = "unknown error";
+  for (let attempt = 1; attempt <= EPISODE_FETCH_MAX_ATTEMPTS; attempt++) {
+    try {
+      const res = await fetchOnce();
+      if (res.ok && res.body) return res;
+      lastReason = `upstream status ${res.status}`;
+    } catch (err) {
+      lastReason = err instanceof Error ? err.message : String(err);
+    }
+    if (attempt < EPISODE_FETCH_MAX_ATTEMPTS) {
+      console.warn(`[download] "${context}": attempt ${attempt} of ${EPISODE_FETCH_MAX_ATTEMPTS} failed (${lastReason}), retrying...`);
+      await sleep(EPISODE_FETCH_RETRY_DELAY_MS);
+    }
+  }
+  console.error(`[download] "${context}": giving up after ${EPISODE_FETCH_MAX_ATTEMPTS} attempts (${lastReason})`);
+  return null;
+}
+
 /**
  * Appends one Jellyfin stream to the archive and waits for it to be fully drained before
  * resolving — this is what actually keeps the zip loop to one episode at a time.
@@ -168,27 +212,48 @@ interface CurrentStreamRef {
  * stream is fatal and crashes the whole process) — a hiccup on Jellyfin's own side, not just the
  * client disconnecting, surfaces here, same as `pipeJellyfinResponse` already guards for
  * single-file downloads.
+ *
+ * Also enforces EPISODE_STALL_TIMEOUT_MS: an idle timer resets on every chunk received and, if it
+ * ever fires, destroys the stream itself rather than waiting on events that a truly stalled
+ * connection may never emit. Destroying a `Readable.fromWeb()` stream cancels the fetch it came
+ * from, so this also frees up whatever transcode slot Jellyfin was holding for it instead of
+ * leaving a dead job running server-side.
+ *
+ * Resolves `true` if the episode's bytes were fully appended, `false` otherwise (error, stall, or
+ * client disconnect) — the caller uses this to decide whether the episode belongs in the
+ * end-of-run failure summary.
  */
-function appendAndDrain(archive: ZipArchive, body: WebReadableStream, name: string, context: string, ref: CurrentStreamRef): Promise<void> {
+function appendAndDrain(archive: ZipArchive, body: WebReadableStream, name: string, context: string, ref: CurrentStreamRef): Promise<boolean> {
   return new Promise((resolve) => {
     const stream = Readable.fromWeb(body);
     ref.current = stream;
     let settled = false;
-    const settle = () => {
+    let idleTimer: ReturnType<typeof setTimeout>;
+    const resetIdleTimer = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        console.error(`[download] "${context}": no data for ${EPISODE_STALL_TIMEOUT_MS}ms, treating as stalled`);
+        stream.destroy(new Error(`stalled: no data for ${EPISODE_STALL_TIMEOUT_MS}ms`));
+      }, EPISODE_STALL_TIMEOUT_MS);
+    };
+    const settle = (ok: boolean) => {
       if (settled) return;
       settled = true;
+      clearTimeout(idleTimer);
       if (ref.current === stream) ref.current = null;
-      resolve();
+      resolve(ok);
     };
+    stream.on("data", resetIdleTimer);
     stream.on("error", (err) => {
       console.error(`[download] upstream stream error ("${context}"):`, err.message);
-      settle();
+      settle(false);
     });
-    stream.on("end", settle);
-    // Covers a plain `.destroy()` with no error (the client-disconnect path above) — that fires
-    // neither 'end' nor 'error', so without this the loop would just hang forever waiting on a
-    // stream that's already gone instead of noticing clientGone and returning.
-    stream.on("close", settle);
+    stream.on("end", () => settle(true));
+    // Covers a plain `.destroy()` with no error (the client-disconnect and stall-timeout paths
+    // above) — that fires neither 'end' nor 'error', so without this the loop would just hang
+    // forever waiting on a stream that's already gone instead of noticing clientGone and returning.
+    stream.on("close", () => settle(false));
+    resetIdleTimer();
     archive.append(stream, { name, store: true });
   });
 }
@@ -293,6 +358,7 @@ async function streamEpisodesAsZip(
   // from crashing the server for everyone else.
   let clientGone = false;
   const currentStream: CurrentStreamRef = { current: null };
+  const failedEpisodes: string[] = [];
   archive.on("warning", (err: Error) => console.error("[download] zip archive warning:", err.message));
   archive.on("error", (err: Error) => {
     console.error("[download] zip archive error:", err.message);
@@ -333,32 +399,44 @@ async function streamEpisodesAsZip(
     logTranscodeDecision(episode.Name, options.quality, decision, sequence);
     const entryName = buildEntryName(episode);
 
+    const episodeContext = `${episode.Name} (${sequence.index} of ${sequence.total})`;
+
     if (!decision.shouldTranscode) {
-      const jfRes = await jellyfinClient.streamProxy(`/Items/${episode.Id}/Download`);
-      if (!jfRes.ok || !jfRes.body) {
-        console.error(`[download] skipping "${episode.Name}" (${sequence.index} of ${sequence.total}) in zip: upstream status ${jfRes.status}`);
+      const jfRes = await fetchEpisodeSource(() => jellyfinClient.streamProxy(`/Items/${episode.Id}/Download`), episodeContext);
+      if (!jfRes) {
+        failedEpisodes.push(episode.Name);
         continue;
       }
-      await appendAndDrain(archive, jfRes.body as unknown as WebReadableStream, entryName, episode.Name, currentStream);
+      const ok = await appendAndDrain(archive, jfRes.body as unknown as WebReadableStream, entryName, episode.Name, currentStream);
+      if (!ok && !clientGone) failedEpisodes.push(episode.Name);
       continue;
     }
 
-    const jfRes = await jellyfinClient.streamTranscodedProxy(episode.Id, decision.targetWidth!, decision.targetHeight!, decision.bitrateBps!);
-    if (!jfRes.ok || !jfRes.body) {
-      console.error(`[download] skipping "${episode.Name}" (${sequence.index} of ${sequence.total}) in zip: transcode status ${jfRes.status}`);
+    const jfRes = await fetchEpisodeSource(
+      () => jellyfinClient.streamTranscodedProxy(episode.Id, decision.targetWidth!, decision.targetHeight!, decision.bitrateBps!),
+      episodeContext
+    );
+    if (!jfRes) {
+      failedEpisodes.push(episode.Name);
       continue;
     }
-    await appendAndDrain(
+    const ok = await appendAndDrain(
       archive,
       jfRes.body as unknown as WebReadableStream,
       entryName.replace(/\.\w+$/, ` (Transcoded ${QUALITY_LABELS[options.quality as keyof typeof QUALITY_LABELS]}).mkv`),
       episode.Name,
       currentStream
     );
+    if (!ok && !clientGone) failedEpisodes.push(episode.Name);
   }
 
   await archive.finalize();
-  if (!clientGone) console.log(`Zip complete: ${zipFilename} (${episodes.length} episodes)`);
+  if (!clientGone) {
+    console.log(`Zip complete: ${zipFilename} (${episodes.length} episodes)`);
+    if (failedEpisodes.length > 0) {
+      console.warn(`[download] zip "${zipFilename}": ${failedEpisodes.length} episode(s) could not be included: ${failedEpisodes.join(", ")}`);
+    }
+  }
 }
 
 export async function streamSeasonZip(

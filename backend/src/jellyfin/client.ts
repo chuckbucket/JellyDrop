@@ -13,6 +13,29 @@ export class JellyfinApiError extends Error {
 
 type QueryParams = Record<string, string | number | undefined>;
 
+/**
+ * Bounds how long a streaming request will wait for Jellyfin to respond with headers at all.
+ * Without this, a Jellyfin that's silently stuck (e.g. its transcode slots are still exhausted
+ * from an earlier failed job piling up dead ffmpeg processes) hangs the request forever — no
+ * error, no timeout, nothing for a caller to react to. The timer is cleared the instant fetch()
+ * resolves, so it only ever bounds the header wait, never an in-progress body read — a two-hour
+ * movie transcode can legitimately take many minutes to fully stream and must not be cut off here.
+ */
+const CONNECT_TIMEOUT_MS = 20_000;
+
+async function fetchWithConnectTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(`Jellyfin did not respond within ${CONNECT_TIMEOUT_MS}ms`)),
+    CONNECT_TIMEOUT_MS
+  );
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Thin wrapper around the Jellyfin REST API. Server-side only — the API key never leaves this module. */
 class JellyfinClient {
   constructor(
@@ -89,7 +112,7 @@ class JellyfinClient {
   async streamProxy(path: string, incomingRange?: string): Promise<Response> {
     const headers: Record<string, string> = this.authHeaders();
     if (incomingRange) headers["Range"] = incomingRange;
-    return fetch(this.buildUrl(path), { headers });
+    return fetchWithConnectTimeout(this.buildUrl(path), { headers });
   }
 
   /**
@@ -123,7 +146,7 @@ class JellyfinClient {
       deviceId: "jellydrop",
       playSessionId: randomUUID(),
     });
-    return fetch(url, { headers: this.authHeaders() });
+    return fetchWithConnectTimeout(url, { headers: this.authHeaders() });
   }
 
   /**

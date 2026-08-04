@@ -302,6 +302,108 @@ describe("streamSeasonZip", () => {
       "Test Show - S01E00 - big (Transcoded Medium).mkv",
     ]);
   });
+
+  it("retries a failed episode fetch and still includes it once a later attempt succeeds", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.mocked(jellyfinClient.getItemsByIds).mockResolvedValueOnce([
+        { Id: "season-1", Name: "Season 1", Type: "Season", SeriesName: "Test Show", IndexNumber: 1 },
+      ]);
+      vi.mocked(showsService.getSeasonEpisodesForDownload).mockResolvedValueOnce([episode("e1", undefined, 1)]);
+
+      vi.mocked(jellyfinClient.streamProxy)
+        .mockImplementationOnce(async () => ({ ok: true, body: freshStream() }) as unknown as Response) // folder.jpg
+        .mockImplementationOnce(async () => ({ ok: false, status: 500, body: null }) as unknown as Response) // e1 attempt 1
+        .mockImplementationOnce(async () => ({ ok: true, body: freshStream() }) as unknown as Response); // e1 attempt 2
+
+      const donePromise = streamSeasonZip(fakeResponse(), "season-1");
+      await vi.runAllTimersAsync();
+      await donePromise;
+
+      expect(jellyfinClient.streamProxy).toHaveBeenCalledTimes(3);
+      const archive = createdArchives.at(-1)!;
+      expect(archive.appended.map((entry) => entry.name)).toEqual(["folder.jpg", "Test Show - S01E00 - e1.mkv"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("gives up on an episode after repeated fetch failures, logs a summary, and still finishes the zip", async () => {
+    vi.useFakeTimers();
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      vi.mocked(jellyfinClient.getItemsByIds).mockResolvedValueOnce([
+        { Id: "season-1", Name: "Season 1", Type: "Season", SeriesName: "Test Show", IndexNumber: 1 },
+      ]);
+      vi.mocked(showsService.getSeasonEpisodesForDownload).mockResolvedValueOnce([
+        episode("e1", undefined, 1),
+        episode("e2", undefined, 1),
+      ]);
+
+      vi.mocked(jellyfinClient.streamProxy)
+        .mockImplementationOnce(async () => ({ ok: true, body: freshStream() }) as unknown as Response) // folder.jpg
+        .mockImplementation(async () => ({ ok: false, status: 500, body: null }) as unknown as Response); // e1: always fails; e2 picks this up too until overridden below
+
+      const donePromise = streamSeasonZip(fakeResponse(), "season-1");
+      await vi.advanceTimersByTimeAsync(10_000); // exhausts e1's 3 attempts (2 retries x 3s delay)
+      vi.mocked(jellyfinClient.streamProxy).mockImplementationOnce(async () => ({ ok: true, body: freshStream() }) as unknown as Response); // e2 succeeds
+      await vi.runAllTimersAsync();
+      await donePromise;
+
+      const archive = createdArchives.at(-1)!;
+      expect(archive.appended.map((entry) => entry.name)).toEqual(["folder.jpg", "Test Show - S01E00 - e2.mkv"]);
+      expect(warnSpy.mock.calls.some((call) => String(call[0]).includes("e1"))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it("destroys a stalled episode stream after the idle timeout instead of hanging forever, and still moves on to the next episode", async () => {
+    vi.useFakeTimers();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      vi.mocked(jellyfinClient.getItemsByIds).mockResolvedValueOnce([
+        { Id: "season-1", Name: "Season 1", Type: "Season", SeriesName: "Test Show", IndexNumber: 1 },
+      ]);
+      vi.mocked(showsService.getSeasonEpisodesForDownload).mockResolvedValueOnce([
+        episode("e1", undefined, 1),
+        episode("e2", undefined, 1),
+      ]);
+
+      // Delivers one chunk, then never sends more and never closes — simulates a connection that's
+      // still open but has stopped producing data (the "download stalled, filesize not changing" case).
+      let stallController!: ReadableStreamDefaultController<Uint8Array>;
+      const stallStream = new ReadableStream<Uint8Array>({
+        start(c) {
+          stallController = c;
+          c.enqueue(new Uint8Array([1, 2, 3]));
+        },
+      });
+      void stallController;
+
+      vi.mocked(jellyfinClient.streamProxy)
+        .mockImplementationOnce(async () => ({ ok: true, body: freshStream() }) as unknown as Response) // folder.jpg
+        .mockImplementationOnce(async () => ({ ok: true, body: stallStream }) as unknown as Response) // e1 — stalls
+        .mockImplementationOnce(async () => ({ ok: true, body: freshStream() }) as unknown as Response); // e2
+
+      const donePromise = streamSeasonZip(fakeResponse(), "season-1");
+      await vi.advanceTimersByTimeAsync(30_000);
+      await donePromise;
+
+      expect(jellyfinClient.streamProxy).toHaveBeenCalledTimes(3);
+      const archive = createdArchives.at(-1)!;
+      expect(archive.appended.map((entry) => entry.name)).toEqual([
+        "folder.jpg",
+        "Test Show - S01E00 - e1.mkv",
+        "Test Show - S01E00 - e2.mkv",
+      ]);
+      expect(errorSpy.mock.calls.some((call) => String(call[0]).includes("stalled"))).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("streamMovie", () => {
